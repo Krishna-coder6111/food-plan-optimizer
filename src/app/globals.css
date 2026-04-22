@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,700;9..144,800;9..144,900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('https://api.fontshare.com/v2/css?f[]=satoshi@400,500,600,700,800&display=swap');
+
+:root {
+  --cream: #FBF7EE;
+  --stone-100: #F3F1ED;
+  --stone-300: #D9D3C7;
+  --stone-500: #918779;
+  --stone-700: #4A453D;
+  --stone-900: #1A1815;
+  --sage-400: #6B9A6B;
+  --sage-600: #3D6340;
+  --terra-400: #E8854E;
+  --terra-600: #B24F1C;
+  --navy-600: #2E3D5C;
+  --navy-800: #121B2E;
+}
+
+html {
+  font-family: 'Satoshi', system-ui, sans-serif;
+  color: var(--stone-900);
+  background: var(--cream);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--stone-300); border-radius: 3px; }
+
+/* Range input styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--stone-300);
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--terra-600);
+  cursor: pointer;
+  border: 3px solid var(--cream);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+
+/* Select styling */
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23918779'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px !important;
+}
+
+/* Number input spinners */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  opacity: 0.4;
+}
+
+/* Table row hover */
+.food-row:hover {
+  background: rgba(232, 228, 221, 0.5);
+}
+
+/* Pill button base */
+.pill {
+  @apply px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer border;
+}
+.pill-active {
+  @apply border-terra-600 bg-terra-600/10 text-terra-600;
+}
+.pill-inactive {
+  @apply border-stone-300 bg-white text-stone-500 hover:border-stone-400;
+}
+
+/* Micro bar */
+.micro-bar {
+  @apply flex gap-[2px];
+}
+.micro-bar-fill {
+  @apply w-[4px] h-[10px] rounded-sm;
+}

@@ -1,0 +1,11 @@
+node_modules/
+.next/
+out/
+.env*.local
+*.tsbuildinfo
+
+# Raw data files (too large for git — download via pipeline)
+data/raw/*.csv
+data/raw/*.json
+data/raw/*.zip
+!data/raw/.gitkeep

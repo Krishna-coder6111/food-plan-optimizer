@@ -5,9 +5,13 @@ import { FOODS, CATEGORIES, REGIONS } from '../data/foods';
 import { CITIES, CITY_MAP } from '../data/cities';
 import { MACRO_PRESETS, ACTIVITY_LEVELS, MAX_SERVINGS } from '../lib/constants';
 import { calcTDEE, calcTargets } from '../lib/tdee';
-import { optimizeDiet } from '../lib/optimizer';
+import { useOptimizer } from '../lib/useOptimizer';
 
-// ─── SMALL COMPONENTS ────────────────────────────────────────────────────────
+import UsMap from '../components/UsMap';
+import MealPlanTable from '../components/MealPlanTable';
+import MicronutrientPanel from '../components/MicronutrientPanel';
+
+// ─── small display components ────────────────────────────────────────────────
 
 function Stat({ label, value, sub, warn, accent }) {
   const color = warn ? 'text-red-600' : accent ? 'text-terra-600' : 'text-stone-900';
@@ -20,73 +24,121 @@ function Stat({ label, value, sub, warn, accent }) {
   );
 }
 
-function MicroBar({ value, max = 100 }) {
-  const pct = Math.min(value / max, 1);
-  const count = Math.round(pct * 10);
+function MicroBar({ value, max = 10 }) {
+  const count = Math.round(Math.min(value / max, 1) * 10);
   return (
-    <div className="micro-bar">
+    <div className="flex gap-px">
       {Array.from({ length: 10 }, (_, i) => (
-        <div key={i} className="micro-bar-fill" style={{ background: i < count ? '#3D6340' : '#E8E4DD' }} />
+        <div key={i} className="w-0.5 h-3 rounded-sm" style={{ background: i < count ? '#3D6340' : '#E8E4DD' }} />
       ))}
     </div>
   );
 }
 
-// ─── MAIN APP ────────────────────────────────────────────────────────────────
+// ─── main ────────────────────────────────────────────────────────────────────
 
 export default function Home() {
-  // Profile state
-  const [gender, setGender] = useState('male');
-  const [age, setAge] = useState(24);
+  // profile
+  const [gender, setGender]     = useState('male');
+  const [age, setAge]           = useState(24);
   const [heightFt, setHeightFt] = useState(5);
   const [heightIn, setHeightIn] = useState(10);
   const [weightLbs, setWeightLbs] = useState(170);
   const [activity, setActivity] = useState('moderate');
-  const [cityId, setCityId] = useState('boston');
+  const [cityId, setCityId]     = useState('boston');
   const [presetId, setPresetId] = useState('maingain');
-  const [excluded, setExcluded] = useState(new Set());
-  const [tab, setTab] = useState('plan');
+
+  // plan controls
+  const [excluded, setExcluded] = useState(() => new Set());
+  const [locks, setLocks]       = useState(() => new Map());  // foodId -> servings
+  const [tab, setTab]           = useState('plan');
   const [showProfile, setShowProfile] = useState(true);
 
-  const city = CITIES[CITY_MAP[cityId]] || CITIES[0];
-  const preset = MACRO_PRESETS[presetId];
+  const city    = CITIES[CITY_MAP[cityId]] || CITIES[0];
+  const preset  = MACRO_PRESETS[presetId];
   const totalHeightIn = heightFt * 12 + heightIn;
-  const tdee = calcTDEE(gender, weightLbs, totalHeightIn, age, activity);
+  const tdee    = calcTDEE(gender, weightLbs, totalHeightIn, age, activity);
   const targets = calcTargets(tdee, preset, weightLbs, gender);
 
   const availableFoods = useMemo(
     () => FOODS.filter(f => !excluded.has(f.id)),
-    [excluded]
+    [excluded],
   );
 
-  const result = useMemo(
-    () => optimizeDiet(availableFoods, targets, city.region, city.costIndex, gender),
-    [availableFoods, targets, city.region, city.costIndex, gender]
-  );
+  // run the solver (debounced, off idle)
+  const { result, pending } = useOptimizer({
+    foods: availableFoods,
+    targets,
+    region: city.region,
+    costIndex: city.costIndex,
+    gender,
+    locks,
+  });
 
+  // ─── callbacks ────────────────────────────────────────────────────────
   const toggleExclude = useCallback((id) => {
     setExcluded(prev => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+    // if we exclude a locked food, unlock it too
+    setLocks(prev => {
+      if (!prev.has(id)) return prev;
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const lockQty = useCallback((id, qty) => {
+    setLocks(prev => {
+      const next = new Map(prev);
+      next.set(id, qty);
+      return next;
+    });
+  }, []);
+
+  const unlockQty = useCallback((id) => {
+    setLocks(prev => {
+      if (!prev.has(id)) return prev;
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const clearAll = useCallback(() => {
+    setExcluded(new Set());
+    setLocks(new Map());
   }, []);
 
   const tabs = [
-    { id: 'plan', label: 'Meal Plan' },
-    { id: 'map', label: 'City Map' },
+    { id: 'plan',     label: 'Meal Plan' },
+    { id: 'micro',    label: 'Micronutrients' },
+    { id: 'map',      label: 'City Map' },
     { id: 'hormones', label: gender === 'male' ? 'T Support' : 'Hormones' },
-    { id: 'foods', label: 'All Foods' },
+    { id: 'foods',    label: 'All Foods' },
   ];
+
+  // Skeleton while first solve is running
+  if (!result) {
+    return (
+      <div className="max-w-[960px] mx-auto px-4 py-20 text-center text-sm text-stone-500">
+        Building your first plan…
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-[960px] mx-auto px-4 py-6">
-      {/* ─── HEADER ─── */}
+      {/* header */}
       <header className="mb-6">
         <div className="flex items-baseline justify-between mb-1">
           <div className="flex items-baseline gap-2">
             <span className="text-2xs font-mono font-bold tracking-[0.2em] text-terra-600 uppercase">Nutrient Engine</span>
             <span className="text-2xs text-stone-300">v3</span>
+            {pending && <span className="text-2xs text-stone-400 animate-pulse">solving…</span>}
           </div>
           <button
             onClick={() => setShowProfile(p => !p)}
@@ -103,11 +155,10 @@ export default function Home() {
         </p>
       </header>
 
-      {/* ─── PROFILE PANEL ─── */}
+      {/* profile panel */}
       {showProfile && (
         <section className="bg-white rounded-2xl border border-stone-200 p-4 mb-4 shadow-sm">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
-            {/* Gender */}
             <div>
               <label className="text-2xs uppercase tracking-wider text-stone-400 font-medium block mb-1">Gender</label>
               <div className="flex gap-1">
@@ -119,13 +170,11 @@ export default function Home() {
                 ))}
               </div>
             </div>
-            {/* Age */}
             <div>
               <label className="text-2xs uppercase tracking-wider text-stone-400 font-medium block mb-1">Age</label>
               <input type="number" value={age} onChange={e => setAge(+e.target.value)} min={14} max={80}
                 className="w-full px-3 py-1.5 rounded-lg border border-stone-200 text-sm font-mono focus:outline-none focus:border-terra-400" />
             </div>
-            {/* Height */}
             <div>
               <label className="text-2xs uppercase tracking-wider text-stone-400 font-medium block mb-1">Height</label>
               <div className="flex gap-1">
@@ -135,7 +184,6 @@ export default function Home() {
                   className="w-full px-2 py-1.5 rounded-lg border border-stone-200 text-sm font-mono focus:outline-none focus:border-terra-400" />
               </div>
             </div>
-            {/* Weight */}
             <div>
               <label className="text-2xs uppercase tracking-wider text-stone-400 font-medium block mb-1">Weight (lbs)</label>
               <input type="number" value={weightLbs} onChange={e => setWeightLbs(+e.target.value)} min={80} max={350}
@@ -167,7 +215,7 @@ export default function Home() {
         </section>
       )}
 
-      {/* ─── MACRO STRATEGY ─── */}
+      {/* macro strategy */}
       <section className="mb-4">
         <div className="text-2xs uppercase tracking-wider text-stone-400 font-medium mb-2">Caloric Strategy</div>
         <div className="flex gap-1.5 flex-wrap">
@@ -186,11 +234,11 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ─── TAB NAV ─── */}
-      <nav className="flex gap-1 bg-stone-100 rounded-xl p-1 mb-4">
+      {/* tabs */}
+      <nav className="flex gap-1 bg-stone-100 rounded-xl p-1 mb-4 overflow-x-auto">
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
-            className={`flex-1 py-2 rounded-lg text-xs font-semibold transition ${
+            className={`flex-1 whitespace-nowrap py-2 px-3 rounded-lg text-xs font-semibold transition ${
               tab === t.id ? 'bg-white shadow-sm text-stone-900' : 'text-stone-400 hover:text-stone-600'
             }`}>
             {t.label}
@@ -199,11 +247,13 @@ export default function Home() {
       </nav>
 
       {/* ═══════ MEAL PLAN TAB ═══════ */}
-      {tab === 'plan' && result && (
+      {tab === 'plan' && (
         <div>
           {!result.feasible && (
             <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-4 text-xs text-red-700">
-              ⚠ The optimizer couldn&apos;t find a perfect solution with current constraints. Some nutrient targets may not be met. Try removing fewer food exclusions or adjusting your macro strategy.
+              ⚠ Could not meet all nutrient targets with current constraints.
+              Some floors were relaxed: {result.relaxed.join(', ') || '(none)'}.
+              Try re-including excluded foods or switching macro strategy.
             </div>
           )}
 
@@ -221,93 +271,88 @@ export default function Home() {
             <Stat label="Cholesterol" value={`${result.totals.chol}mg`} sub="max 300mg"
               warn={result.totals.chol > 300} />
             <Stat label="Added Sugar" value={`${result.totals.sugar}g`} sub="minimized" />
-            <Stat label="Prot/Dollar" value={`${(result.totals.protein / result.totals.cost).toFixed(1)}g`} sub="efficiency" />
+            <Stat label="Prot/Dollar" value={`${(result.totals.protein / Math.max(0.01, result.totals.cost)).toFixed(1)}g`} sub="efficiency" />
           </div>
 
-          {/* Food table */}
-          <div className="bg-white rounded-2xl border border-stone-200 p-4 mb-4 overflow-x-auto shadow-sm">
-            <div className="flex justify-between items-center mb-3">
-              <h2 className="font-display text-lg font-bold">Daily Meal Plan</h2>
-              <span className="text-2xs text-stone-400">tap ✕ to exclude &amp; recalculate</span>
-            </div>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b-2 border-stone-200">
-                  {['', 'Food', 'Qty', 'Protein', 'Cal', 'Cost', 'Fiber', 'Micro', ''].map((h, i) => (
-                    <th key={i} className="py-2 px-1 text-left text-2xs uppercase tracking-wider text-stone-400 font-medium">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {result.plan.map(f => (
-                  <tr key={f.id} className="food-row border-b border-stone-100">
-                    <td className="py-2 px-1">
-                      <span className="w-2 h-2 rounded-full inline-block" style={{ background: CATEGORIES[f.cat]?.color || '#999' }} />
-                    </td>
-                    <td className="py-2 px-1 font-medium text-stone-800">{f.name}</td>
-                    <td className="py-2 px-1 text-stone-500">{f.servings}× <span className="text-xs">{f.unit}</span></td>
-                    <td className="py-2 px-1 font-mono font-bold text-sage-600">{(f.p * f.servings).toFixed(0)}g</td>
-                    <td className="py-2 px-1 font-mono text-stone-500">{(f.cal * f.servings).toFixed(0)}</td>
-                    <td className="py-2 px-1 font-mono font-semibold text-terra-600">${f.totalCost.toFixed(2)}</td>
-                    <td className="py-2 px-1 text-stone-500">{(f.fib * f.servings).toFixed(0)}g</td>
-                    <td className="py-2 px-1"><MicroBar value={f.micro} /></td>
-                    <td className="py-2 px-1">
-                      <button onClick={() => toggleExclude(f.id)} className="text-red-400 hover:text-red-600 text-sm">✕</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="border-t-2 border-stone-300">
-                  <td colSpan={2} className="py-2 px-1 font-display font-bold">TOTAL</td>
-                  <td className="py-2 px-1" />
-                  <td className="py-2 px-1 font-mono font-bold text-sage-600">{result.totals.protein}g</td>
-                  <td className="py-2 px-1 font-mono font-bold">{result.totals.calories}</td>
-                  <td className="py-2 px-1 font-mono font-bold text-terra-600">${result.totals.cost}</td>
-                  <td className="py-2 px-1 font-bold">{result.totals.fiber}g</td>
-                  <td colSpan={2} />
-                </tr>
-              </tfoot>
-            </table>
-          </div>
+          <MealPlanTable
+            plan={result.plan}
+            totals={result.totals}
+            targets={targets}
+            locks={locks}
+            onLock={lockQty}
+            onUnlock={unlockQty}
+            onExclude={toggleExclude}
+          />
 
-          {/* Excluded foods */}
-          {excluded.size > 0 && (
+          {(excluded.size > 0 || locks.size > 0) && (
             <div className="bg-white rounded-2xl border border-stone-200 p-4 mb-4">
-              <div className="text-sm font-semibold mb-2">
-                Excluded Foods <span className="text-stone-400 font-normal text-xs">— tap to re-add</span>
+              <div className="text-sm font-semibold mb-2 flex items-center justify-between">
+                <span>Your Overrides</span>
+                <button onClick={clearAll} className="pill pill-inactive text-red-400 text-xs">Clear All</button>
               </div>
-              <div className="flex gap-1.5 flex-wrap">
-                {[...excluded].map(id => {
-                  const f = FOODS.find(x => x.id === id);
-                  return f ? (
-                    <button key={id} onClick={() => toggleExclude(id)}
-                      className="pill pill-inactive flex items-center gap-1">
-                      <span className="text-sage-600 text-xs">+</span> {f.name}
-                    </button>
-                  ) : null;
-                })}
-                <button onClick={() => setExcluded(new Set())} className="pill pill-inactive text-red-400">Clear All</button>
-              </div>
+              {locks.size > 0 && (
+                <div className="mb-2">
+                  <div className="text-2xs uppercase tracking-wider text-terra-600 font-semibold mb-1">🔒 Locked quantities</div>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {[...locks.entries()].map(([id, q]) => {
+                      const f = FOODS.find(x => x.id === id);
+                      return f ? (
+                        <button key={id} onClick={() => unlockQty(id)} className="pill pill-inactive text-xs">
+                          <span className="font-mono">{q}×</span> {f.name} <span className="text-stone-400 ml-1">unlock</span>
+                        </button>
+                      ) : null;
+                    })}
+                  </div>
+                </div>
+              )}
+              {excluded.size > 0 && (
+                <div>
+                  <div className="text-2xs uppercase tracking-wider text-stone-500 font-semibold mb-1">✕ Excluded foods</div>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {[...excluded].map(id => {
+                      const f = FOODS.find(x => x.id === id);
+                      return f ? (
+                        <button key={id} onClick={() => toggleExclude(id)} className="pill pill-inactive text-xs flex items-center gap-1">
+                          <span className="text-sage-600">+</span> {f.name}
+                        </button>
+                      ) : null;
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          {/* Local food tips */}
+          {result.warnings.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-4">
+              <div className="text-xs font-semibold text-amber-800 mb-2">Absorption Notes</div>
+              <ul className="text-xs text-amber-700 leading-relaxed space-y-1 list-disc pl-4">
+                {result.warnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {/* local food tips */}
           <div className="bg-white rounded-2xl border border-stone-200 p-4">
             <h3 className="font-display text-base font-bold mb-3 flex items-center gap-2">
               <span>📍</span> Local Food — {city.name}, {city.state}
             </h3>
-            <div className="border-l-3 border-sage-400 pl-3 mb-3" style={{ borderLeftWidth: 3, borderLeftColor: '#6B9A6B' }}>
+            <div className="pl-3 mb-3 border-l-[3px]" style={{ borderLeftColor: '#6B9A6B' }}>
               <div className="text-2xs uppercase tracking-wider text-sage-600 font-semibold mb-1">Available Locally</div>
               <div className="text-sm text-stone-700 leading-relaxed">{city.local}</div>
               <div className="text-xs text-stone-400 mt-1">Peak season: {city.season}</div>
             </div>
-            <div className="border-l-3 border-terra-400 pl-3" style={{ borderLeftWidth: 3, borderLeftColor: '#E8854E' }}>
+            <div className="pl-3 border-l-[3px]" style={{ borderLeftColor: '#E8854E' }}>
               <div className="text-2xs uppercase tracking-wider text-terra-600 font-semibold mb-1">Cost-Saving Strategy</div>
               <div className="text-sm text-stone-700 leading-relaxed">{city.strategy}</div>
             </div>
           </div>
         </div>
+      )}
+
+      {/* ═══════ MICRONUTRIENT TAB ═══════ */}
+      {tab === 'micro' && (
+        <MicronutrientPanel nutrientScores={result.nutrientScores} relaxed={result.relaxed} />
       )}
 
       {/* ═══════ CITY MAP TAB ═══════ */}
@@ -316,43 +361,7 @@ export default function Home() {
           <div className="bg-white rounded-2xl border border-stone-200 p-4 mb-4">
             <h2 className="font-display text-lg font-bold mb-1">US Grocery Cost Map</h2>
             <p className="text-xs text-stone-400 mb-3">Tap a city to see adjusted costs and local strategies</p>
-
-            {/* City dots visualization */}
-            <svg viewBox="0 0 820 500" className="w-full max-h-[380px]">
-              <defs>
-                <linearGradient id="lg">
-                  <stop offset="0%" stopColor="#3D6340" />
-                  <stop offset="100%" stopColor="#B24F1C" />
-                </linearGradient>
-              </defs>
-              {CITIES.map(c => {
-                const proj = projectCity(c.lat, c.lng);
-                const sel = c.id === cityId;
-                const t = (c.costIndex - 85) / 50;
-                const r = 5 + t * 6;
-                return (
-                  <g key={c.id} onClick={() => setCityId(c.id)} className="cursor-pointer">
-                    {sel && <circle cx={proj[0]} cy={proj[1]} r={r + 12} fill="#E8854E" opacity={0.12} />}
-                    <circle cx={proj[0]} cy={proj[1]} r={sel ? r + 2 : r}
-                      fill={`hsl(${150 - t * 150}, ${50 + t * 15}%, ${45 - t * 8}%)`}
-                      stroke={sel ? '#4A453D' : 'rgba(255,255,255,0.4)'}
-                      strokeWidth={sel ? 2 : 0.8} />
-                    <text x={proj[0]} y={proj[1] - r - 5} textAnchor="middle"
-                      fill={sel ? '#1A1815' : '#918779'}
-                      fontSize={sel ? 11 : 9} fontWeight={sel ? 700 : 400}
-                      fontFamily="Satoshi, sans-serif">
-                      {c.name}
-                    </text>
-                  </g>
-                );
-              })}
-              <g transform="translate(640,440)">
-                <text fill="#918779" fontSize="7" fontFamily="Satoshi, sans-serif">GROCERY COST INDEX</text>
-                <rect x="0" y="5" width="80" height="5" rx="3" fill="url(#lg)" />
-                <text x="0" y="18" fill="#B8AFA0" fontSize="6">Low</text>
-                <text x="68" y="18" fill="#B8AFA0" fontSize="6">High</text>
-              </g>
-            </svg>
+            <UsMap cities={CITIES} selectedId={cityId} onSelect={setCityId} />
           </div>
 
           <div className="flex gap-2 flex-wrap mb-4">
@@ -361,7 +370,6 @@ export default function Home() {
             <Stat label="Your Plan" value={`$${(result.totals.cost * 30).toFixed(0)}`} sub="/month optimized" />
           </div>
 
-          {/* City ranking */}
           <div className="bg-white rounded-2xl border border-stone-200 p-4">
             <h3 className="font-display text-base font-bold mb-3">All Cities — Cheapest to Most Expensive</h3>
             {[...CITIES].sort((a, b) => a.costIndex - b.costIndex).map((c, i) => {
@@ -374,7 +382,7 @@ export default function Home() {
                   <span className="w-4 text-xs text-stone-300 font-mono">{i + 1}</span>
                   <span className={`w-24 text-xs truncate ${sel ? 'text-stone-900 font-bold' : 'text-stone-600'}`}>{c.name}</span>
                   <div className="flex-1 h-1.5 bg-stone-100 rounded-full overflow-hidden">
-                    <div className="h-full rounded-full transition-all" style={{ width: `${barW}%`, background: `hsl(${150 - t * 150}, 50%, 45%)` }} />
+                    <div className="h-full rounded-full transition-all" style={{ width: `${Math.max(0, Math.min(100, barW))}%`, background: `hsl(${150 - t * 150}, 50%, 45%)` }} />
                   </div>
                   <span className="w-7 text-xs text-stone-400 font-mono text-right">{c.costIndex}</span>
                   <span className="w-14 text-xs text-stone-300 text-right">${c.monthlyGrocery}</span>
@@ -386,7 +394,7 @@ export default function Home() {
       )}
 
       {/* ═══════ HORMONES TAB ═══════ */}
-      {tab === 'hormones' && result && (
+      {tab === 'hormones' && (
         <div>
           <div className="bg-white rounded-2xl border border-stone-200 p-4 mb-4">
             <h2 className="font-display text-lg font-bold mb-3">
@@ -395,7 +403,7 @@ export default function Home() {
             {getHormoneGoals(gender).map((goal, i) => {
               const hits = result.plan.filter(f => {
                 const tags = gender === 'male' ? f.hormoneM : f.hormoneF;
-                return tags.some(t => t.toLowerCase().includes(goal.key.toLowerCase()));
+                return (tags || []).some(t => t.toLowerCase().includes(goal.key.toLowerCase()));
               });
               return (
                 <div key={i} className="flex items-center gap-3 py-2 border-b border-stone-100 last:border-0">
@@ -425,8 +433,8 @@ export default function Home() {
             </div>
             <p className="text-sm text-stone-600 leading-relaxed">
               {gender === 'male'
-                ? 'Zinc (oysters, pumpkin seeds, liver) is the #1 mineral for T synthesis. Vitamin D acts as a hormone itself — deficiency correlates with low T. Magnesium increases free testosterone by reducing SHBG. Omega-3s lower inflammatory cytokines that suppress production. Cruciferous vegetables (broccoli, cabbage, kale) contain DIM which metabolizes excess estrogen. Dietary fat is necessary — cholesterol is the precursor molecule for all steroid hormones, so don\'t over-restrict fat intake.'
-                : 'Iron replaces menstrual losses and prevents hormonal disruption from anemia. Omega-3s support prostaglandin balance and reduce cycle-related inflammation. Magnesium supports progesterone production and calms the nervous system. B12 and folate are essential for ovulatory health. DIM from cruciferous vegetables supports healthy estrogen detoxification. Calcium and vitamin D together reduce PMS severity.'
+                ? 'Zinc (oysters, pumpkin seeds, liver) is the #1 mineral for T synthesis. Vitamin D acts as a hormone itself — deficiency correlates with low T. Magnesium increases free testosterone by reducing SHBG. Omega-3s lower inflammatory cytokines that suppress production. Cruciferous vegetables contain DIM which metabolizes excess estrogen. Cholesterol is the precursor for all steroid hormones, so don\'t over-restrict fat.'
+                : 'Iron replaces menstrual losses and prevents hormonal disruption from anemia. Omega-3s support prostaglandin balance and reduce cycle-related inflammation. Magnesium supports progesterone production and calms the nervous system. B12 and folate are essential for ovulatory health. DIM supports healthy estrogen detoxification. Calcium and vitamin D together reduce PMS severity.'
               }
             </p>
           </div>
@@ -469,9 +477,9 @@ export default function Home() {
               }).map(f => {
                 const isExcl = excluded.has(f.id);
                 const price = (f.price[city.region] || f.price.us) * (city.costIndex / 100);
-                const pd = (f.p / price).toFixed(1);
+                const pd = +(f.p / price).toFixed(1);
                 return (
-                  <tr key={f.id} className={`food-row border-b border-stone-50 ${isExcl ? 'opacity-30' : ''}`}>
+                  <tr key={f.id} className={`border-b border-stone-50 ${isExcl ? 'opacity-30' : ''}`}>
                     <td className="py-1.5 px-1">
                       <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: CATEGORIES[f.cat]?.color }} />
                     </td>
@@ -496,10 +504,9 @@ export default function Home() {
         </div>
       )}
 
-      {/* ─── FOOTER ─── */}
       <footer className="mt-8 py-4 border-t border-stone-200 text-center">
         <p className="text-2xs text-stone-300 leading-relaxed">
-          Nutrition data from USDA FoodData Central. Pricing from BLS Average Retail Prices (Feb 2026), adjusted by regional CPI.
+          Nutrition data from USDA FoodData Central. Pricing from BLS Average Retail Prices, adjusted by regional CPI.
           <br />Hormone optimization based on peer-reviewed research. Not medical advice — consult a registered dietitian.
         </p>
       </footer>
@@ -507,13 +514,7 @@ export default function Home() {
   );
 }
 
-// ─── HELPERS ──────────────────────────────────────────────────────────────────
-
-function projectCity(lat, lng) {
-  if (lat > 50) return [115 + (lng + 170) * 2.2, 375 - (lat - 55) * 8];
-  if (lat < 25) return [220 + (lng + 160) * 3, 420];
-  return [80 + (lng + 130) * 12.5, 50 + (52 - lat) * 22];
-}
+// ─── helpers ──────────────────────────────────────────────────────────────────
 
 function getHormoneGoals(gender) {
   if (gender === 'male') return [

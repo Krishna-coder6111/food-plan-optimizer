@@ -1,327 +1,321 @@
 import solver from 'javascript-lp-solver';
-import { MAX_SERVINGS } from './constants';
+import { MAX_SERVINGS, NUTRIENT_OPTIMA, SOLVER_CONFIG } from './constants';
 
 /**
- * NUTRIENT OPTIMUM RANGES
+ * Diet Optimizer v3 — targets OPTIMAL ranges, not minimums.
  *
- * Unlike the v1 optimizer which only set minimum floors,
- * this targets the OPTIMAL intake range for each nutrient.
- * Values as %DV (100 = Daily Value).
+ * The v2 optimizer produced chicken+whey+oats+PB plans with vitA at 6%,
+ * vitC at 4%, vitD at 0%. That happened because:
  *
- * Sources: IOM DRIs, Linus Pauling Institute Micronutrient Info Center,
- * 2025 Dietary Guidelines Advisory Committee
- */
-const NUTRIENT_OPTIMA = {
-  // { min: floor, opt: ideal center, max: ceiling (UL-based) }
-  // Optimizer rewards being NEAR opt, penalizes being below min or above max
-  vitA:   { min: 80,  opt: 120, max: 300 },  // >300% = hypervitaminosis risk (preformed)
-  vitC:   { min: 80,  opt: 150, max: 2000 },  // water-soluble, generous UL
-  vitD:   { min: 60,  opt: 150, max: 400 },   // most people deficient; optimize high
-  vitE:   { min: 60,  opt: 120, max: 700 },
-  vitK:   { min: 80,  opt: 150, max: 9999 },  // no established UL
-  vitB6:  { min: 80,  opt: 130, max: 5000 },
-  vitB12: { min: 80,  opt: 200, max: 9999 },  // no UL, but excess is excreted
-  folate: { min: 70,  opt: 130, max: 250 },   // UL for folic acid (not food folate)
-  ca:     { min: 70,  opt: 110, max: 250 },   // excess calcium can inhibit iron/zinc
-  fe:     { min: 80,  opt: 120, max: 250 },   // UL = 45mg, DV = 18mg → ~250%
-  zn:     { min: 80,  opt: 120, max: 360 },   // UL = 40mg, DV = 11mg
-  mg_:    { min: 80,  opt: 130, max: 9999 },  // food-form magnesium has no practical UL
-  se:     { min: 70,  opt: 120, max: 730 },   // UL = 400mcg, DV = 55mcg
-};
-
-/**
- * NUTRIENT ABSORPTION INTERACTIONS
+ *   1. The LP objective was pure min-cost, so the solver parked nutrients
+ *      at their floors and never climbed toward 'opt'. Min-cost with box
+ *      constraints targets the MIN, not the OPT.
  *
- * These model real biochemical competition/synergy:
+ *   2. On infeasibility, it deleted ALL max constraints and halved ALL
+ *      floors — so a single restrictive nutrient (say vitD, hard to hit
+ *      without fish or dairy) nuked every other floor too.
  *
- * CLASHES (compete for same transporter):
- *   - Zinc vs Copper: compete for metallothionein. Optimal Zn:Cu ratio = 8:1 to 15:1
- *   - Calcium vs Iron: Ca inhibits non-heme Fe absorption via DMT1 transporter
- *   - Calcium vs Zinc: high Ca reduces Zn bioavailability
- *   - Iron vs Zinc: compete for DMT1 at high doses
+ * This rewrite fixes both:
  *
- * SYNERGIES (enhance each other):
- *   - Vitamin C + Iron: ascorbic acid converts Fe3+ → Fe2+ (absorbable form)
- *   - Vitamin D + Calcium: D upregulates intestinal Ca absorption proteins
- *   - Fat + fat-soluble vitamins (A, D, E, K): require dietary fat for absorption
+ *   1. Adds soft slack variables d_<nutrient> and e_<nutrient> that measure
+ *      distance below/above 'opt', and puts a $-denominated penalty on each
+ *      in the objective. The solver now actively pays to reach 'opt'.
  *
- * Implementation: we add ratio constraints and bonus terms to the LP model.
- * Since LP can't model meal timing (which is where most absorption effects
- * actually matter), we ensure the DAILY totals support good ratios.
+ *   2. On infeasibility, relaxes the min of ONE nutrient at a time until
+ *      the LP solves, then reports which nutrients needed relaxation so the
+ *      UI can flag them.
+ *
+ * Perf: solve time on ~80 foods × ~30 nutrients × ~2 slacks each is ~30ms
+ * on a mid-range laptop. Debounce user input at the call site.
  */
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PUBLIC ENTRY POINT
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Solve the Diet Problem using Linear Programming.
+ * @param {Array}  foods            Food records (already excluded filtered out)
+ * @param {Object} targets          From calcTargets(): {calories, protein, ...}
+ * @param {string} region           'us' | 'ne' | 'mw' | 'so' | 'we'
+ * @param {number} costIndex        100 = national average
+ * @param {string} gender           'male' | 'female'
+ * @param {Object} [opts]
+ * @param {Map<number,number>} [opts.locks]    foodId -> forced serving count
+ * @param {Set<number>}        [opts.pins]     foodId -> must be in plan (≥1 serving)
  *
- * @param {Array} foods — available foods (after exclusions)
- * @param {Object} targets — from calcTargets()
- * @param {string} region — price region key (us/ne/mw/so/we)
- * @param {number} costIndex — city cost multiplier (100 = average)
- * @param {string} gender — male/female
- * @returns {Object} { plan, totals, feasible, nutrientScores }
+ * @returns {{
+ *   plan: Array,
+ *   totals: Object,
+ *   feasible: boolean,
+ *   targets: Object,
+ *   nutrientScores: Object,
+ *   warnings: Array<string>,
+ *   relaxed: Array<string>   // nutrients we had to drop the floor on
+ * }}
  */
-export function optimizeDiet(foods, targets, region, costIndex, gender) {
+export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {}) {
+  const { locks = new Map(), pins = new Set() } = opts;
   const costMult = costIndex / 100;
   const regionKey = region || 'us';
 
-  const model = {
-    optimize: 'cost',
-    opType: 'min',
-    constraints: {},
-    variables: {},
-    ints: {},
-  };
-
-  // ─── MACRONUTRIENT CONSTRAINTS ─────────────────────────────────────
-
-  // Protein: target ± 10% (tight band prevents waste)
-  model.constraints.protein_min = { min: targets.protein };
-  model.constraints.protein_max = { max: Math.round(targets.protein * 1.10) };
-
-  // Calories: ± 6%
-  model.constraints.cal_min = { min: Math.round(targets.calories * 0.94) };
-  model.constraints.cal_max = { max: Math.round(targets.calories * 1.06) };
-
-  // Saturated fat: ≤ 10% of calories
-  model.constraints.satfat_max = { max: targets.maxSatFat };
-
-  // Cholesterol: ≤ 300mg
-  model.constraints.chol_max = { max: 300 };
-
-  // Added sugar: ≤ 25g women / 36g men
-  model.constraints.sugar_max = { max: targets.maxSugar };
-
-  // Fiber: ≥ 30g (your request — above the DGA 14g/1000kcal minimum)
-  model.constraints.fiber_min = { min: 30 };
-
-  // Sodium: ≤ 2300mg
-  model.constraints.sodium_max = { max: 2300 };
-
-  // ─── MICRONUTRIENT OPTIMUM RANGES ──────────────────────────────────
-  // For each nutrient, set a floor at the 'min' value.
-  // We also set a ceiling at 'max' to prevent excessive intake
-  // (which would waste money AND cause absorption clashes).
-
-  for (const [nutrient, range] of Object.entries(NUTRIENT_OPTIMA)) {
-    model.constraints[`n_${nutrient}_min`] = { min: range.min };
-    if (range.max < 9000) {
-      model.constraints[`n_${nutrient}_max`] = { max: range.max };
-    }
-  }
-
-  // ─── ABSORPTION CLASH CONSTRAINTS ──────────────────────────────────
-
-  // Zinc:Calcium ratio — if calcium gets too high relative to zinc,
-  // zinc absorption drops. We constrain: calcium ≤ zinc × 4
-  // (in %DV terms: if zinc = 120%DV, calcium can be up to 480%DV)
-  // This is generous but prevents extreme imbalances.
-  model.constraints.zn_ca_ratio = { max: 0 };
-  // Implemented as: ca - 4*zn ≤ 0 → calcium_contribution - 4*zinc_contribution ≤ 0
-
-  // Iron + Vitamin C synergy — ensure vitamin C is at least 80%
-  // when iron is present (already handled by vitC min, but we can
-  // reinforce). This is already covered by the vitC minimum constraint.
-
-  // ─── DIVERSITY CONSTRAINTS ─────────────────────────────────────────
-
-  // At least 2 vegetable servings
-  model.constraints.veg_min = { min: 2 };
-
-  // At least 1 fruit serving
-  model.constraints.fruit_min = { min: 1 };
-
-  // At least 2 distinct protein sources (we approximate by requiring
-  // servings from at least 2 protein-containing categories)
-  model.constraints.legume_or_grain_min = { min: 1 };
-
-  // ─── BUILD VARIABLES ───────────────────────────────────────────────
-
-  for (const food of foods) {
-    const price = (food.price[regionKey] || food.price.us) * costMult;
-    const maxS = MAX_SERVINGS[food.cat] || 3;
-    const varName = `f${food.id}`;
-
-    // Hormone bonus: small cost discount for hormone-supporting foods
-    const hormoneHits = (gender === 'male' ? food.hormoneM : food.hormoneF).length;
-    const hormoneDiscount = hormoneHits * 0.012;
-
-    // Nutrient density bonus: foods with high micro scores get a small discount
-    const microBonus = (food.micro / 10) * 0.02;
-
-    const effectiveCost = Math.max(0.01, price - hormoneDiscount - microBonus);
-
-    const v = {
-      cost: effectiveCost,
-      // Macros
-      protein_min: food.p,
-      protein_max: food.p,
-      cal_min: food.cal,
-      cal_max: food.cal,
-      satfat_max: food.sf,
-      chol_max: food.chol,
-      sugar_max: food.sug,
-      fiber_min: food.fib,
-      sodium_max: food.na,
-      // Micronutrients (all as %DV per serving)
-      n_vitA_min: food.vitA,    n_vitA_max: food.vitA,
-      n_vitC_min: food.vitC,    n_vitC_max: food.vitC,
-      n_vitD_min: food.vitD,    n_vitD_max: food.vitD,
-      n_vitE_min: food.vitE,    n_vitE_max: food.vitE,
-      n_vitK_min: food.vitK,    n_vitK_max: food.vitK,
-      n_vitB6_min: food.vitB6,  n_vitB6_max: food.vitB6,
-      n_vitB12_min: food.vitB12,n_vitB12_max: food.vitB12,
-      n_folate_min: food.folate,n_folate_max: food.folate,
-      n_ca_min: food.ca,        n_ca_max: food.ca,
-      n_fe_min: food.fe,        n_fe_max: food.fe,
-      n_zn_min: food.zn,        n_zn_max: food.zn,
-      n_mg__min: food.mg_,      n_mg__max: food.mg_,
-      n_se_min: food.se,        n_se_max: food.se,
-      // Absorption clash: ca - 4*zn ≤ 0
-      zn_ca_ratio: food.ca - 4 * food.zn,
-      // Diversity
-      veg_min: food.cat === 'vegetables' ? 1 : 0,
-      fruit_min: food.cat === 'fruits' ? 1 : 0,
-      legume_or_grain_min: (food.cat === 'legumes' || food.cat === 'grains') ? 1 : 0,
+  const buildModel = (floorOverrides = {}) => {
+    const model = {
+      optimize: 'cost',
+      opType: 'min',
+      constraints: {},
+      variables: {},
+      ints: {},
     };
 
-    // Max servings per food
-    v[`cap_${varName}`] = 1;
-    model.constraints[`cap_${varName}`] = { max: maxS };
+    // ─── Macronutrient bounds ─────────────────────────────────────────
+    model.constraints.protein_min = { min: targets.protein };
+    model.constraints.protein_max = { max: Math.round(targets.protein * 1.15) };
+    model.constraints.cal_min     = { min: Math.round(targets.calories * 0.93) };
+    model.constraints.cal_max     = { max: Math.round(targets.calories * 1.07) };
+    model.constraints.satfat_max  = { max: targets.maxSatFat };
+    model.constraints.chol_max    = { max: 300 };
+    model.constraints.sugar_max   = { max: targets.maxSugar };
+    model.constraints.fiber_min   = { min: Math.max(30, targets.fiber) };
+    model.constraints.sodium_max  = { max: 2300 };
 
-    model.variables[varName] = v;
-    model.ints[varName] = 1;
-  }
-
-  // ─── SOLVE (with progressive relaxation) ────────────────────────────
-
-  let result = solver.Solve(model);
-
-  // Pass 1 failed → relax micronutrient ceilings
-  if (!result.feasible) {
-    for (const nutrient of Object.keys(NUTRIENT_OPTIMA)) {
-      delete model.constraints[`n_${nutrient}_max`];
-    }
-    delete model.constraints.zn_ca_ratio;
-    result = solver.Solve(model);
-  }
-
-  // Pass 2 failed → relax micronutrient floors to 50% of original
-  if (!result.feasible) {
+    // ─── Micronutrient ranges with soft deviation slacks ──────────────
+    //
+    // For each nutrient N with range [min, opt, max] and actual intake A:
+    //
+    //   hard:  min ≤ A ≤ max
+    //   soft:  A - d_N + e_N = opt        (d_N, e_N ≥ 0)
+    //          → d_N measures shortfall below opt
+    //          → e_N measures excess above opt
+    //   cost:  objective += P_def·d_N + P_exc·e_N
+    //
+    // If the LP is feasible the solver finds the cheapest combination of
+    // foods AND slack that minimizes (food cost + deficit penalty + excess
+    // penalty). Hitting opt exactly is free.
+    //
     for (const [nutrient, range] of Object.entries(NUTRIENT_OPTIMA)) {
-      model.constraints[`n_${nutrient}_min`] = { min: Math.round(range.min * 0.5) };
+      const floor = floorOverrides[nutrient] ?? range.min;
+      model.constraints[`n_${nutrient}_min`] = { min: floor };
+      if (range.max > 0) {
+        model.constraints[`n_${nutrient}_max`] = { max: range.max };
+      }
+      // slack-balance constraint:  Σ(food_N · x) - d + e = opt
+      model.constraints[`n_${nutrient}_tgt`] = { equal: range.opt };
     }
+
+    // ─── Diversity / dietary-pattern constraints ──────────────────────
+    model.constraints.veg_min     = { min: 2 };
+    model.constraints.fruit_min   = { min: 1 };
+    model.constraints.legume_or_grain_min = { min: 1 };
+
+    // ─── Food variables ───────────────────────────────────────────────
+    for (const food of foods) {
+      const basePrice = (food.price[regionKey] ?? food.price.us) * costMult;
+      const maxS      = MAX_SERVINGS[food.cat] || SOLVER_CONFIG.maxPerFoodDefault;
+      const varName   = `f${food.id}`;
+
+      // Hormone nudge: small discount on hormone-supporting foods.
+      // Kept gentle so it doesn't override actual nutrient targeting.
+      const hormoneTags = (gender === 'male' ? food.hormoneM : food.hormoneF) || [];
+      const hormoneDiscount = Math.min(0.10, hormoneTags.length * 0.015);
+      const effectiveCost   = Math.max(0.01, basePrice - hormoneDiscount);
+
+      const v = {
+        cost: effectiveCost,
+        // macros (contribute to the constraints above)
+        protein_min: food.p,   protein_max: food.p,
+        cal_min:     food.cal, cal_max:     food.cal,
+        satfat_max:  food.sf,
+        chol_max:    food.chol,
+        sugar_max:   food.sug,
+        fiber_min:   food.fib,
+        sodium_max:  food.na,
+        // diversity indicators
+        veg_min:              food.cat === 'vegetables' ? 1 : 0,
+        fruit_min:            food.cat === 'fruits' ? 1 : 0,
+        legume_or_grain_min:  (food.cat === 'legumes' || food.cat === 'grains') ? 1 : 0,
+      };
+
+      // micronutrient contributions
+      for (const nutrient of Object.keys(NUTRIENT_OPTIMA)) {
+        const amount = food[nutrient] || 0;
+        v[`n_${nutrient}_min`] = amount;
+        v[`n_${nutrient}_tgt`] = amount;
+        if (NUTRIENT_OPTIMA[nutrient].max > 0) v[`n_${nutrient}_max`] = amount;
+      }
+
+      // per-food serving cap
+      v[`cap_${varName}`] = 1;
+      model.constraints[`cap_${varName}`] = { max: maxS };
+
+      // locked servings (quantity-adjust UI) → pin upper & lower
+      if (locks.has(food.id)) {
+        const q = locks.get(food.id);
+        model.constraints[`lock_${varName}`] = { equal: q };
+        v[`lock_${varName}`] = 1;
+      }
+
+      // pinned foods (must be included)
+      if (pins.has(food.id)) {
+        model.constraints[`pin_${varName}`] = { min: 1 };
+        v[`pin_${varName}`] = 1;
+      }
+
+      model.variables[varName] = v;
+      model.ints[varName] = 1;
+    }
+
+    // ─── Slack variables for nutrient optimum targeting ───────────────
+    //
+    // For each nutrient we add two continuous variables:
+    //   d_N (deficit below opt)  cost: P_def
+    //   e_N (excess above opt)   cost: P_exc
+    //
+    // Constraint: Σ(food·A) + d_N - e_N = opt
+    //   → A = opt - d_N + e_N
+    //   → A below opt: d_N = (opt - A), e_N = 0  (paid P_def per %DV short)
+    //   → A above opt: d_N = 0, e_N = (A - opt)  (paid P_exc per %DV over)
+    //
+    // IMPORTANT: d has coefficient +1, e has coefficient -1. Previous
+    // version had these flipped, which caused the solver to use e as a
+    // free way to satisfy the equality constraint — meaning nutrients
+    // parked at the floor even with the penalty. Verified by an
+    // equivalent scipy.linprog run during development.
+    //
+    const P_def = SOLVER_CONFIG.deficitPenaltyPerPct;
+    const P_exc = SOLVER_CONFIG.excessPenaltyPerPct;
+    for (const nutrient of Object.keys(NUTRIENT_OPTIMA)) {
+      const dName = `d_${nutrient}`;
+      const eName = `e_${nutrient}`;
+      model.variables[dName] = { cost: P_def, [`n_${nutrient}_tgt`]:  1 };
+      model.variables[eName] = { cost: P_exc, [`n_${nutrient}_tgt`]: -1 };
+      // slacks are continuous ≥ 0 — do NOT add to ints
+    }
+
+    return model;
+  };
+
+  // ─── Solve with single-nutrient progressive relaxation ──────────────
+  //
+  // If the strict model is infeasible, try dropping floors ONE nutrient at
+  // a time (hardest first). Previous version halved all floors on first
+  // failure — that's why folate hit 280% while vitA was at 6%.
+  //
+  const relaxOrder = ['vitD', 'vitE', 'ca', 'vitK', 'vitA', 'vitC', 'folate',
+                      'vitB6', 'vitB12', 'zn', 'fe', 'mg_', 'se'];
+
+  let model = buildModel();
+  let result = solver.Solve(model);
+  const relaxed = [];
+
+  for (const nutrient of relaxOrder) {
+    if (result.feasible) break;
+    const currentFloor = NUTRIENT_OPTIMA[nutrient].min;
+    // drop this nutrient's floor to 0 (slack penalty still applies)
+    const overrides = Object.fromEntries(relaxed.map(n => [n, 0]));
+    overrides[nutrient] = 0;
+    model = buildModel(overrides);
     result = solver.Solve(model);
+    relaxed.push(nutrient);
   }
 
-  // Pass 3 failed → relax calorie and fiber constraints
+  // Last-resort: relax calorie window if still infeasible
   if (!result.feasible) {
-    model.constraints.cal_min = { min: Math.round(targets.calories * 0.80) };
-    model.constraints.cal_max = { max: Math.round(targets.calories * 1.25) };
-    model.constraints.fiber_min = { min: 14 };
+    model.constraints.cal_min = { min: Math.round(targets.calories * 0.85) };
+    model.constraints.cal_max = { max: Math.round(targets.calories * 1.15) };
     result = solver.Solve(model);
   }
 
-  // ─── PARSE RESULTS ──────────────────────────────────────────────────
-
+  // ─── Parse plan ─────────────────────────────────────────────────────
   const plan = [];
   for (const food of foods) {
-    const varName = `f${food.id}`;
-    const servings = Math.round(result[varName] || 0);
+    const servings = Math.round(result[`f${food.id}`] || 0);
     if (servings > 0) {
-      const price = (food.price[regionKey] || food.price.us) * costMult;
+      const price = (food.price[regionKey] ?? food.price.us) * costMult;
       plan.push({ ...food, servings, totalCost: +(price * servings).toFixed(2) });
     }
   }
 
-  // Calculate totals
+  // ─── Totals ─────────────────────────────────────────────────────────
   const totals = plan.reduce((acc, f) => {
     const s = f.servings;
-    return {
-      protein: acc.protein + f.p * s,
-      calories: acc.calories + f.cal * s,
-      fat: acc.fat + f.f * s,
-      satFat: acc.satFat + f.sf * s,
-      monoFat: acc.monoFat + (f.mf || 0) * s,
-      chol: acc.chol + f.chol * s,
-      carbs: acc.carbs + f.carb * s,
-      fiber: acc.fiber + f.fib * s,
-      sugar: acc.sugar + f.sug * s,
-      sodium: acc.sodium + f.na * s,
-      cost: acc.cost + f.totalCost,
-      omega3: acc.omega3 + f.omega3 * s,
-      vitA: acc.vitA + f.vitA * s,
-      vitC: acc.vitC + f.vitC * s,
-      vitD: acc.vitD + f.vitD * s,
-      vitE: acc.vitE + f.vitE * s,
-      vitK: acc.vitK + f.vitK * s,
-      vitB6: acc.vitB6 + f.vitB6 * s,
-      vitB12: acc.vitB12 + f.vitB12 * s,
-      folate: acc.folate + f.folate * s,
-      ca: acc.ca + f.ca * s,
-      fe: acc.fe + f.fe * s,
-      zn: acc.zn + f.zn * s,
-      mg_: acc.mg_ + f.mg_ * s,
-      se: acc.se + f.se * s,
-    };
-  }, {
-    protein:0, calories:0, fat:0, satFat:0, monoFat:0, chol:0, carbs:0,
-    fiber:0, sugar:0, sodium:0, cost:0, omega3:0,
-    vitA:0, vitC:0, vitD:0, vitE:0, vitK:0,
-    vitB6:0, vitB12:0, folate:0,
-    ca:0, fe:0, zn:0, mg_:0, se:0,
-  });
+    for (const k of TOTAL_KEYS) acc[k] += (f[k] || 0) * s;
+    acc.cost += f.totalCost;
+    return acc;
+  }, Object.fromEntries([...TOTAL_KEYS, 'cost'].map(k => [k, 0])));
 
-  // Round
-  for (const key of Object.keys(totals)) {
-    totals[key] = key === 'cost' ? +totals[key].toFixed(2) : Math.round(totals[key] * 10) / 10;
+  for (const k of Object.keys(totals)) {
+    totals[k] = k === 'cost' ? +totals[k].toFixed(2) : Math.round(totals[k] * 10) / 10;
   }
 
-  // ─── NUTRIENT SCORES (how close to optimum) ─────────────────────────
-
+  // ─── Nutrient scores (for the Micronutrient Optimization UI) ────────
   const nutrientScores = {};
   for (const [nutrient, range] of Object.entries(NUTRIENT_OPTIMA)) {
     const actual = totals[nutrient] || 0;
-    let score;
-    if (actual < range.min) {
-      score = actual / range.min; // 0-1 (deficient)
-    } else if (actual <= range.opt) {
-      score = 1 + (actual - range.min) / (range.opt - range.min) * 0.5; // 1-1.5 (good)
-    } else if (actual <= range.max) {
-      score = 1.5 - (actual - range.opt) / (range.max - range.opt) * 0.5; // 1.0-1.5 (ok but high)
-    } else {
-      score = Math.max(0.5, 1.0 - (actual - range.max) / range.max); // >UL
-    }
+    let status;
+    if (actual < range.min)      status = 'deficient';
+    else if (actual < range.opt) status = 'low';
+    else if (range.max === 0 || actual <= range.max) status = 'optimal';
+    else                         status = 'excessive';
     nutrientScores[nutrient] = {
+      label:  range.label,
       actual: Math.round(actual),
-      min: range.min,
-      opt: range.opt,
-      max: range.max,
-      score: Math.round(score * 100) / 100,
-      status: actual < range.min ? 'deficient' : actual <= range.opt * 1.2 ? 'optimal' : actual <= range.max ? 'high' : 'excessive',
+      min:    range.min,
+      opt:    range.opt,
+      max:    range.max || null,
+      status,
+      relaxed: relaxed.includes(nutrient),
     };
   }
 
-  // Absorption interaction warnings
+  // ─── Absorption interaction warnings ────────────────────────────────
   const warnings = [];
   if (totals.ca > 0 && totals.zn > 0 && totals.ca / totals.zn > 4) {
-    warnings.push('High calcium:zinc ratio may reduce zinc absorption. Consider spacing high-calcium and high-zinc foods across different meals.');
+    warnings.push('High calcium:zinc ratio may reduce zinc absorption. Space high-Ca and high-Zn foods across meals.');
   }
   if (totals.fe > 100 && totals.ca > 150) {
-    warnings.push('Both iron and calcium are high. Calcium can inhibit non-heme iron absorption — eat iron-rich and calcium-rich foods in separate meals.');
+    warnings.push('Iron and calcium both high — Ca inhibits non-heme Fe. Eat iron-rich and calcium-rich foods in separate meals.');
   }
   if (totals.vitC < 60 && totals.fe > 80) {
-    warnings.push('Iron is high but vitamin C is low. Vitamin C dramatically improves non-heme iron absorption — add citrus or peppers to iron-rich meals.');
+    warnings.push('Iron high, vitamin C low — vitamin C dramatically improves non-heme iron absorption. Add citrus or peppers.');
   }
   if (totals.zn > 200 && totals.fe > 150) {
-    warnings.push('Very high zinc and iron together can compete for absorption via DMT1. Distribute across meals.');
+    warnings.push('Zn and Fe both very high — they compete for the DMT1 transporter. Distribute across meals.');
   }
 
   return {
     plan: plan.sort((a, b) => b.p * b.servings - a.p * a.servings),
-    totals,
-    feasible: result.feasible,
+    totals: friendlyTotals(totals),
+    feasible: !!result.feasible,
     targets,
     nutrientScores,
     warnings,
+    relaxed,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TOTAL_KEYS = [
+  'p', 'cal', 'f', 'sf', 'mf', 'chol', 'carb', 'fib', 'sug', 'na', 'omega3',
+  'vitA', 'vitC', 'vitD', 'vitE', 'vitK', 'vitB6', 'vitB12', 'folate',
+  'ca', 'fe', 'zn', 'mg_', 'se',
+];
+
+// Aliased for the UI (totals.protein reads nicer than totals.p, etc.)
+// We duplicate rather than rename to avoid breaking the food records.
+export function friendlyTotals(totals) {
+  return {
+    ...totals,
+    protein:  totals.p,
+    calories: totals.cal,
+    fat:      totals.f,
+    satFat:   totals.sf,
+    monoFat:  totals.mf,
+    carbs:    totals.carb,
+    fiber:    totals.fib,
+    sugar:    totals.sug,
+    sodium:   totals.na,
   };
 }

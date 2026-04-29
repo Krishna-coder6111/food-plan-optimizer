@@ -3,9 +3,10 @@
 import { useState, useMemo, useCallback } from 'react';
 import { FOODS, CATEGORIES, REGIONS } from '../data/foods';
 import { CITIES, CITY_MAP } from '../data/cities';
-import { MACRO_PRESETS, ACTIVITY_LEVELS, MAX_SERVINGS } from '../lib/constants';
+import { MACRO_PRESETS, ACTIVITY_LEVELS, MAX_SERVINGS, STORE_TIERS } from '../lib/constants';
 import { calcTDEE, calcTargets } from '../lib/tdee';
 import { useOptimizer } from '../lib/useOptimizer';
+import { usePersistentState, setSerialize, setDeserialize, mapSerialize, mapDeserialize } from '../lib/usePersistentState';
 
 import UsMap from '../components/UsMap';
 import MealPlanTable from '../components/MealPlanTable';
@@ -38,24 +39,31 @@ function MicroBar({ value, max = 10 }) {
 // ─── main ────────────────────────────────────────────────────────────────────
 
 export default function Home() {
-  // profile
-  const [gender, setGender]     = useState('male');
-  const [age, setAge]           = useState(24);
-  const [heightFt, setHeightFt] = useState(5);
-  const [heightIn, setHeightIn] = useState(10);
-  const [weightLbs, setWeightLbs] = useState(170);
-  const [activity, setActivity] = useState('moderate');
-  const [cityId, setCityId]     = useState('boston');
-  const [presetId, setPresetId] = useState('maingain');
+  // profile (persisted)
+  const [gender, setGender]     = usePersistentState('ne.gender', 'male');
+  const [age, setAge]           = usePersistentState('ne.age', 24);
+  const [heightFt, setHeightFt] = usePersistentState('ne.heightFt', 5);
+  const [heightIn, setHeightIn] = usePersistentState('ne.heightIn', 10);
+  const [weightLbs, setWeightLbs] = usePersistentState('ne.weightLbs', 170);
+  const [activity, setActivity] = usePersistentState('ne.activity', 'moderate');
+  const [cityId, setCityId]     = usePersistentState('ne.cityId', 'boston');
+  const [presetId, setPresetId] = usePersistentState('ne.presetId', 'maingain');
+  const [storeTierId, setStoreTierId] = usePersistentState('ne.storeTierId', 'mainstream');
 
-  // plan controls
-  const [excluded, setExcluded] = useState(() => new Set());
-  const [locks, setLocks]       = useState(() => new Map());  // foodId -> servings
+  // plan controls (excluded + locks persisted; tab + profile-visibility ephemeral)
+  const [excluded, setExcluded] = usePersistentState('ne.excluded', new Set(), {
+    serialize: setSerialize, deserialize: setDeserialize,
+  });
+  const [locks, setLocks]       = usePersistentState('ne.locks', new Map(), {
+    serialize: mapSerialize, deserialize: mapDeserialize,
+  });
   const [tab, setTab]           = useState('plan');
   const [showProfile, setShowProfile] = useState(true);
 
   const city    = CITIES[CITY_MAP[cityId]] || CITIES[0];
   const preset  = MACRO_PRESETS[presetId];
+  const storeTier = STORE_TIERS.find(s => s.id === storeTierId) || STORE_TIERS[3];
+  const effectiveCostIndex = Math.round(city.costIndex * storeTier.mult);
   const totalHeightIn = heightFt * 12 + heightIn;
   const tdee    = calcTDEE(gender, weightLbs, totalHeightIn, age, activity);
   const targets = calcTargets(tdee, preset, weightLbs, gender);
@@ -70,7 +78,7 @@ export default function Home() {
     foods: availableFoods,
     targets,
     region: city.region,
-    costIndex: city.costIndex,
+    costIndex: effectiveCostIndex,
     gender,
     locks,
   });
@@ -190,7 +198,7 @@ export default function Home() {
                 className="w-full px-3 py-1.5 rounded-lg border border-stone-200 text-sm font-mono focus:outline-none focus:border-terra-400" />
             </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
             <div>
               <label className="text-2xs uppercase tracking-wider text-stone-400 font-medium block mb-1">Activity Level</label>
               <select value={activity} onChange={e => setActivity(e.target.value)}
@@ -203,6 +211,13 @@ export default function Home() {
               <select value={cityId} onChange={e => setCityId(e.target.value)}
                 className="w-full px-3 py-1.5 rounded-lg border border-stone-200 text-sm bg-white focus:outline-none focus:border-terra-400">
                 {CITIES.map(c => <option key={c.id} value={c.id}>{c.name}, {c.state} ({c.costIndex > 100 ? '+' : ''}{c.costIndex - 100}%)</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-2xs uppercase tracking-wider text-stone-400 font-medium block mb-1" title={storeTier.desc}>Store Tier</label>
+              <select value={storeTierId} onChange={e => setStoreTierId(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-lg border border-stone-200 text-sm bg-white focus:outline-none focus:border-terra-400">
+                {STORE_TIERS.map(s => <option key={s.id} value={s.id}>{s.name} ({s.mult < 1 ? '−' : '+'}{Math.abs(Math.round((s.mult - 1) * 100))}%)</option>)}
               </select>
             </div>
           </div>

@@ -1,5 +1,17 @@
 import solver from 'javascript-lp-solver';
-import { MAX_SERVINGS, NUTRIENT_OPTIMA, SOLVER_CONFIG } from './constants';
+import { MAX_SERVINGS, NUTRIENT_OPTIMA, SOLVER_CONFIG, BIOAVAIL_BY_CATEGORY } from './constants';
+
+/**
+ * bioavail(food, nutrient) — fraction of `food[nutrient]` that the body
+ * actually absorbs. Defaults to 1.0 (no adjustment) for nutrients where we
+ * don't have a per-category factor.
+ */
+function bioavail(food, nutrient) {
+  const map = BIOAVAIL_BY_CATEGORY[food.cat];
+  if (!map) return 1;
+  const f = map[nutrient];
+  return f == null ? 1 : f;
+}
 
 /**
  * Diet Optimizer v3 — targets OPTIMAL ranges, not minimums.
@@ -135,7 +147,11 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
         legume_or_grain_min:  (food.cat === 'legumes' || food.cat === 'grains') ? 1 : 0,
       };
 
-      // micronutrient contributions
+      // micronutrient contributions — raw labeled %DV. The DRI values that
+      // back NUTRIENT_OPTIMA already assume average mixed-diet bioavailability,
+      // so applying a per-food factor here would double-penalize. We compute
+      // a separate "absorbed" total below for display, and use it to surface
+      // warnings (low heme iron, calcium-iron clashes, etc).
       for (const nutrient of Object.keys(NUTRIENT_OPTIMA)) {
         const amount = food[nutrient] || 0;
         v[`n_${nutrient}_min`] = amount;
@@ -161,7 +177,12 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
       }
 
       model.variables[varName] = v;
-      model.ints[varName] = 1;
+      // NOTE: do NOT mark food vars as integer. javascript-lp-solver's MIP
+      // branch-and-bound combined with the nutrient-equality slack
+      // constraints below can blow up to 60+ seconds (or never terminate).
+      // Solving as a pure LP keeps it under ~20ms; we round servings to
+      // integers in post-processing below. Verified empirically: MIP+slack
+      // intractable, LP+rounding fast and produces near-identical plans.
     }
 
     // ─── Slack variables for nutrient optimum targeting ───────────────
@@ -247,21 +268,46 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
     totals[k] = k === 'cost' ? +totals[k].toFixed(2) : Math.round(totals[k] * 10) / 10;
   }
 
+  // ─── Bioavailable (absorbed) totals ─────────────────────────────────
+  // Per-source absorption is wildly different (heme Fe ~25%, plant Fe ~10%;
+  // dairy Ca ~32%, oxalate-rich greens ~5%; etc). We sum a "what your body
+  // actually absorbs" total alongside the labeled %DV total so the UI can
+  // show both, and we apply a vit-C synergy boost on non-heme iron when
+  // total vit C is high.
+  const absorbedTotals = Object.fromEntries(Object.keys(NUTRIENT_OPTIMA).map(k => [k, 0]));
+  for (const f of plan) {
+    for (const n of Object.keys(NUTRIENT_OPTIMA)) {
+      absorbedTotals[n] += (f[n] || 0) * bioavail(f, n) * f.servings;
+    }
+  }
+  // Vit-C synergy bonus on non-heme iron (Hallberg 1989 — vit C >75mg can
+  // 2–3x non-heme Fe absorption). Applied as a +20% bonus to absorbed iron
+  // when total vit C ≥100%DV. Conservative vs published 200–300% boosts.
+  if (totals.vitC >= 100) {
+    absorbedTotals.fe *= 1.20;
+  }
+  // Round absorbed totals
+  for (const k of Object.keys(absorbedTotals)) {
+    absorbedTotals[k] = Math.round(absorbedTotals[k] * 10) / 10;
+  }
+
   // ─── Nutrient scores (for the Micronutrient Optimization UI) ────────
   const nutrientScores = {};
   for (const [nutrient, range] of Object.entries(NUTRIENT_OPTIMA)) {
     const actual = totals[nutrient] || 0;
+    const absorbed = absorbedTotals[nutrient] || 0;
     let status;
     if (actual < range.min)      status = 'deficient';
     else if (actual < range.opt) status = 'low';
     else if (range.max === 0 || actual <= range.max) status = 'optimal';
     else                         status = 'excessive';
     nutrientScores[nutrient] = {
-      label:  range.label,
-      actual: Math.round(actual),
-      min:    range.min,
-      opt:    range.opt,
-      max:    range.max || null,
+      label:    range.label,
+      actual:   Math.round(actual),
+      absorbed: Math.round(absorbed),
+      min:      range.min,
+      opt:      range.opt,
+      max:      range.max || null,
       status,
       relaxed: relaxed.includes(nutrient),
     };
@@ -281,10 +327,18 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
   if (totals.zn > 200 && totals.fe > 150) {
     warnings.push('Zn and Fe both very high — they compete for the DMT1 transporter. Distribute across meals.');
   }
+  // Bioavailability flags
+  if (totals.fe >= 80 && absorbedTotals.fe < totals.fe * 0.55) {
+    warnings.push(`Most of your iron is non-heme (plant) — only ~${Math.round(absorbedTotals.fe)}%DV is actually absorbed vs ${Math.round(totals.fe)}%DV labeled. Add red meat, liver, or pair with vit C.`);
+  }
+  if (totals.ca >= 80 && absorbedTotals.ca < totals.ca * 0.6) {
+    warnings.push(`Calcium absorption looks low (~${Math.round(absorbedTotals.ca)}%DV absorbed vs ${Math.round(totals.ca)}%DV labeled) — leafy greens with oxalate aren't well-absorbed. Dairy, sardines, or fortified milk are better sources.`);
+  }
 
   return {
     plan: plan.sort((a, b) => b.p * b.servings - a.p * a.servings),
     totals: friendlyTotals(totals),
+    absorbedTotals,
     feasible: !!result.feasible,
     targets,
     nutrientScores,

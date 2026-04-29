@@ -26,6 +26,23 @@ HERE    = os.path.dirname(os.path.abspath(__file__))
 RAW_DIR = os.path.join(HERE, '..', 'raw')
 OUT_DIR = os.path.join(HERE, '..', 'processed')
 
+# Load .env if present so BLS_API_KEY (and others) are available without
+# needing to export them in the shell. Tiny parser — no external dep.
+def _load_env():
+    env_path = os.path.join(HERE, '.env')
+    if not os.path.exists(env_path):
+        return
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            k, v = line.split('=', 1)
+            os.environ.setdefault(k.strip(), v.strip())
+
+_load_env()
+BLS_API_KEY = os.environ.get('BLS_API_KEY', '').strip()
+
 BLS_BASE  = 'https://download.bls.gov/pub/time.series/ap'
 BLS_FILES = ['ap.data.0.Current', 'ap.item', 'ap.area', 'ap.series']
 

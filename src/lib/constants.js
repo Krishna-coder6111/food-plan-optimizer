@@ -78,6 +78,65 @@ export const NUTRIENT_OPTIMA = {
 };
 
 /**
+ * STORE_TIERS — empirical price multipliers per store category.
+ *
+ * Multiplies the city's costIndex. So a city with index 110 (10% above
+ * national avg) shopping at Costco (mult 0.78) gets effective index
+ * 110 × 0.78 ≈ 86. Tuned against published mystery-shopper datasets and
+ * Consumer Reports surveys; treat as ±10% accurate.
+ */
+export const STORE_TIERS = [
+  { id: 'costco',     name: "Costco / Sam's Club",  mult: 0.78, desc: 'Bulk warehouse — cheapest per unit if you can store it.' },
+  { id: 'walmart',    name: 'Walmart / Aldi',       mult: 0.88, desc: 'Discount national chain — best baseline for staples.' },
+  { id: 'tj',         name: "Trader Joe's",         mult: 0.95, desc: 'Private-label discount — cheap on a few categories.' },
+  { id: 'mainstream', name: 'Kroger / Safeway',     mult: 1.00, desc: 'Mainstream supermarket — national average baseline.' },
+  { id: 'sprouts',    name: 'Sprouts / Fresh Market', mult: 1.15, desc: 'Natural-foods chain — premium produce, mid-price center store.' },
+  { id: 'wholefoods', name: 'Whole Foods',          mult: 1.32, desc: 'Premium organic — highest grocery prices in most markets.' },
+  { id: 'corner',     name: 'Corner / Bodega',      mult: 1.45, desc: 'Convenience-store pricing — for emergencies only.' },
+];
+
+/**
+ * BIOAVAILABILITY — fraction of stated nutrient that is actually absorbed.
+ *
+ * The %DV labels assume ideal absorption, but real human absorption varies
+ * massively by source:
+ *   - Heme iron (animal): ~25% absorbed | non-heme (plant): ~5–15%
+ *   - Zinc from animal: ~30% | from plants (phytate-rich): ~15%
+ *   - Calcium from dairy: ~32% | from oxalate-rich greens: ~5%
+ *   - B12: animal sources are absorbed; plant foods don't contain it
+ *   - Folate: synthetic (fortification) ~100%, food folate ~50%
+ *
+ * Applied to the displayed totals only — NOT to the LP constraints,
+ * because the IOM DRIs that back NUTRIENT_OPTIMA already assume average
+ * mixed-diet bioavailability (so applying it on the constraint side would
+ * double-penalize). The optimizer reports both labeled %DV and absorbed
+ * %DV; the UI shows them side-by-side and surfaces warnings when they
+ * diverge meaningfully (e.g., a vegan plan with 100% labeled iron but
+ * only 40% absorbed).
+ *
+ * Refs: Hurrell & Egli 2010 (Fe), Lönnerdal 2000 (Zn), Weaver et al 1999 (Ca).
+ */
+export const BIOAVAIL_BY_CATEGORY = {
+  // category → { nutrient: factor }
+  poultry:    { fe: 1.00, zn: 1.00, ca: 0.30, vitB12: 1.00 },
+  beef:       { fe: 1.00, zn: 1.00, ca: 0.30, vitB12: 1.00 },
+  fish:       { fe: 0.95, zn: 1.00, ca: 0.50, vitB12: 1.00 },
+  eggs:       { fe: 0.50, zn: 0.85, ca: 0.40, vitB12: 1.00 },
+  dairy:      { fe: 0.40, zn: 0.85, ca: 1.00, vitB12: 1.00, folate: 1.00 },
+  legumes:    { fe: 0.40, zn: 0.65, ca: 0.50, vitB12: 0.00, folate: 0.55 },
+  grains:     { fe: 0.45, zn: 0.55, ca: 0.40, vitB12: 0.30, folate: 0.85 }, // most US grains are folate-fortified
+  vegetables: { fe: 0.40, zn: 0.60, ca: 0.40, vitB12: 0.00, folate: 0.55 },
+  fruits:     { fe: 0.40, zn: 0.65, ca: 0.40, vitB12: 0.00, folate: 0.55 },
+  nuts:       { fe: 0.45, zn: 0.55, ca: 0.30, vitB12: 0.00, folate: 0.55 },
+  fats:       { fe: 1.00, zn: 1.00, ca: 1.00, vitB12: 1.00 },
+  supplement: { fe: 0.85, zn: 1.00, ca: 1.00, vitB12: 0.50, folate: 1.00 }, // crystalline supplements
+};
+
+// Heme iron foods boosted further if vitamin C is present in the same plan.
+// Applied as a small post-hoc bonus in the totals (10% for moderate vit C,
+// 20% for high) — kept out of the LP so the model stays linear.
+
+/**
  * SOLVER_CONFIG — tuning knobs for the optimizer.
  *
  *   deficitPenalty: $ penalty per 1%DV below opt

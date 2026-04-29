@@ -291,6 +291,32 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
     absorbedTotals[k] = Math.round(absorbedTotals[k] * 10) / 10;
   }
 
+  // ─── Per-food contribution tables (used by the UI to answer "where is
+  // my iron coming from?" and "which foods cover my zinc target?") ────
+  // For each nutrient, build a sorted list of {name, amount, pct} for each
+  // food in the plan that supplies a non-zero amount.
+  const contributorsByNutrient = {};
+  for (const nutrient of Object.keys(NUTRIENT_OPTIMA)) {
+    const items = [];
+    for (const f of plan) {
+      const amt = (f[nutrient] || 0) * f.servings;
+      if (amt > 0.5) items.push({ id: f.id, name: f.name, servings: f.servings, amount: +amt.toFixed(1) });
+    }
+    items.sort((a, b) => b.amount - a.amount);
+    contributorsByNutrient[nutrient] = items;
+  }
+  // Same shape but for omega-3 (grams) and cholesterol (mg) which the
+  // hormone tab cares about.
+  for (const key of ['omega3', 'chol']) {
+    const items = [];
+    for (const f of plan) {
+      const amt = (f[key] || 0) * f.servings;
+      if (amt > 0.01) items.push({ id: f.id, name: f.name, servings: f.servings, amount: +amt.toFixed(2) });
+    }
+    items.sort((a, b) => b.amount - a.amount);
+    contributorsByNutrient[key] = items;
+  }
+
   // ─── Nutrient scores (for the Micronutrient Optimization UI) ────────
   const nutrientScores = {};
   for (const [nutrient, range] of Object.entries(NUTRIENT_OPTIMA)) {
@@ -308,8 +334,10 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
       min:      range.min,
       opt:      range.opt,
       max:      range.max || null,
+      storage:  range.storage,
       status,
       relaxed: relaxed.includes(nutrient),
+      contributors: contributorsByNutrient[nutrient].slice(0, 5),
     };
   }
 
@@ -339,6 +367,7 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
     plan: plan.sort((a, b) => b.p * b.servings - a.p * a.servings),
     totals: friendlyTotals(totals),
     absorbedTotals,
+    contributorsByNutrient,
     feasible: !!result.feasible,
     targets,
     nutrientScores,

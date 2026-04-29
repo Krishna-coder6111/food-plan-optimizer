@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, Fragment } from 'react';
 import { FOODS, CATEGORIES, REGIONS } from '../data/foods';
 import { CITIES, CITY_MAP } from '../data/cities';
 import { MACRO_PRESETS, ACTIVITY_LEVELS, MAX_SERVINGS, STORE_TIERS } from '../lib/constants';
@@ -11,6 +11,8 @@ import { usePersistentState, setSerialize, setDeserialize, mapSerialize, mapDese
 import UsMap from '../components/UsMap';
 import MealPlanTable from '../components/MealPlanTable';
 import MicronutrientPanel from '../components/MicronutrientPanel';
+import MicroBarWithTip from '../components/MicroBarWithTip';
+import { SortHeader, applySort } from '../components/SortHeader';
 
 // ─── small display components ────────────────────────────────────────────────
 
@@ -21,17 +23,6 @@ function Stat({ label, value, sub, warn, accent }) {
       <div className="text-2xs uppercase tracking-wider text-stone-400 font-medium mb-1">{label}</div>
       <div className={`text-lg font-bold font-mono ${color}`}>{value}</div>
       {sub && <div className="text-2xs text-stone-400 mt-0.5">{sub}</div>}
-    </div>
-  );
-}
-
-function MicroBar({ value, max = 10 }) {
-  const count = Math.round(Math.min(value / max, 1) * 10);
-  return (
-    <div className="flex gap-px">
-      {Array.from({ length: 10 }, (_, i) => (
-        <div key={i} className="w-0.5 h-3 rounded-sm" style={{ background: i < count ? '#3D6340' : '#E8E4DD' }} />
-      ))}
     </div>
   );
 }
@@ -415,31 +406,16 @@ export default function Home() {
             <h2 className="font-display text-lg font-bold mb-3">
               {gender === 'male' ? '⚡ Testosterone Optimization' : '🌸 Hormonal Balance'}
             </h2>
-            {getHormoneGoals(gender).map((goal, i) => {
-              const hits = result.plan.filter(f => {
-                const tags = gender === 'male' ? f.hormoneM : f.hormoneF;
-                return (tags || []).some(t => t.toLowerCase().includes(goal.key.toLowerCase()));
-              });
-              return (
-                <div key={i} className="flex items-center gap-3 py-2 border-b border-stone-100 last:border-0">
-                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${hits.length >= 2 ? 'bg-sage-400' : hits.length === 1 ? 'bg-terra-400' : 'bg-red-400'}`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-stone-800">{goal.nutrient}</div>
-                    <div className="text-xs text-stone-400 leading-snug">{goal.why}</div>
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <div className={`text-xs font-bold font-mono ${hits.length >= 2 ? 'text-sage-600' : hits.length === 1 ? 'text-terra-600' : 'text-red-500'}`}>
-                      {hits.length} source{hits.length !== 1 ? 's' : ''}
-                    </div>
-                    {hits.length > 0 && (
-                      <div className="text-2xs text-stone-400 max-w-[120px] text-right truncate">
-                        {hits.slice(0, 2).map(f => f.name).join(', ')}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+            <p className="text-xs text-stone-400 mb-3">Counts <em>real</em> nutrient amounts in each plan item — click a row to expand all sources.</p>
+            {getHormoneGoals(gender).map((goal, i) => (
+              <HormoneRow
+                key={i}
+                goal={goal}
+                plan={result.plan}
+                totals={result.totals}
+                contributorsByNutrient={result.contributorsByNutrient}
+              />
+            ))}
           </div>
 
           <div className="bg-stone-50 rounded-2xl border border-stone-200 p-4">
@@ -458,65 +434,13 @@ export default function Home() {
 
       {/* ═══════ ALL FOODS TAB ═══════ */}
       {tab === 'foods' && (
-        <div className="bg-white rounded-2xl border border-stone-200 p-4 overflow-x-auto">
-          <div className="flex justify-between items-center mb-3">
-            <div>
-              <h2 className="font-display text-lg font-bold">Food Database</h2>
-              <p className="text-xs text-stone-400">Sorted by protein per dollar · tap ✕ to exclude</p>
-            </div>
-            {excluded.size > 0 && (
-              <button onClick={() => setExcluded(new Set())} className="pill pill-inactive text-xs">Reset ({excluded.size})</button>
-            )}
-          </div>
-          <div className="flex gap-2 flex-wrap mb-3">
-            {Object.entries(CATEGORIES).map(([k, v]) => (
-              <span key={k} className="flex items-center gap-1 text-2xs text-stone-400">
-                <span className="w-1.5 h-1.5 rounded-full" style={{ background: v.color }} />
-                {v.label}
-              </span>
-            ))}
-          </div>
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b-2 border-stone-200">
-                {['', 'Food', 'Unit', 'Prot', 'Cal', `Cost (${city.region.toUpperCase()})`, 'P/$', 'Fiber', 'Micro', ''].map((h, i) => (
-                  <th key={i} className="py-2 px-1 text-left text-2xs uppercase tracking-wider text-stone-400 font-medium">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {[...FOODS].sort((a, b) => {
-                const pa = a.p / (a.price[city.region] || a.price.us);
-                const pb = b.p / (b.price[city.region] || b.price.us);
-                return pb - pa;
-              }).map(f => {
-                const isExcl = excluded.has(f.id);
-                const price = (f.price[city.region] || f.price.us) * (city.costIndex / 100);
-                const pd = +(f.p / price).toFixed(1);
-                return (
-                  <tr key={f.id} className={`border-b border-stone-50 ${isExcl ? 'opacity-30' : ''}`}>
-                    <td className="py-1.5 px-1">
-                      <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: CATEGORIES[f.cat]?.color }} />
-                    </td>
-                    <td className="py-1.5 px-1 font-medium text-stone-700">{f.name}</td>
-                    <td className="py-1.5 px-1 text-stone-400 text-2xs">{f.unit}</td>
-                    <td className="py-1.5 px-1 font-mono font-semibold text-sage-600">{f.p}g</td>
-                    <td className="py-1.5 px-1 font-mono text-stone-400">{f.cal}</td>
-                    <td className="py-1.5 px-1 font-mono text-terra-600">${price.toFixed(2)}</td>
-                    <td className="py-1.5 px-1 font-mono font-bold" style={{ color: pd > 30 ? '#3D6340' : pd > 18 ? '#B24F1C' : '#918779' }}>{pd}</td>
-                    <td className="py-1.5 px-1 text-stone-400">{f.fib}g</td>
-                    <td className="py-1.5 px-1"><MicroBar value={f.micro} /></td>
-                    <td className="py-1.5 px-1">
-                      <button onClick={() => toggleExclude(f.id)} className={`text-xs ${isExcl ? 'text-sage-600' : 'text-red-400 hover:text-red-600'}`}>
-                        {isExcl ? '+' : '✕'}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <FoodsTab
+          city={city}
+          effectiveCostIndex={effectiveCostIndex}
+          excluded={excluded}
+          setExcluded={setExcluded}
+          toggleExclude={toggleExclude}
+        />
       )}
 
       <footer className="mt-8 py-4 border-t border-stone-200 text-center">
@@ -531,25 +455,243 @@ export default function Home() {
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
+// Each goal binds the display label to a real food field on the FOODS records
+// + a per-serving threshold above which a food counts as a "source", and a
+// target total for the day (used to color-grade the row).
+//
+// `field` maps to FOODS keys (note `mg_` not `mg`, and `omega3` not `o3`,
+// `vitB12` not `b12`). `unit` is what we render. `dimByCat` is special-cased
+// for DIM since it isn't a numeric field — we count cruciferous vegetables.
 function getHormoneGoals(gender) {
   if (gender === 'male') return [
-    { nutrient: 'Zinc', key: 'zn', why: 'Directly supports testosterone synthesis in Leydig cells' },
-    { nutrient: 'Vitamin D', key: 'vitD', why: 'Correlates with T levels; RCT showed +25% T with supplementation' },
-    { nutrient: 'Magnesium', key: 'mg', why: 'Increases free testosterone by reducing SHBG binding' },
-    { nutrient: 'Omega-3', key: 'o3', why: 'Reduces inflammatory cytokines that suppress T production' },
-    { nutrient: 'Selenium', key: 'se', why: 'Essential for sperm production and thyroid conversion (T4→T3)' },
-    { nutrient: 'B12', key: 'b12', why: 'Supports energy metabolism and red blood cell production' },
-    { nutrient: 'DIM (cruciferous)', key: 'DIM', why: 'Promotes healthy estrogen metabolism via 2-OH pathway' },
-    { nutrient: 'Cholesterol (dietary)', key: 'chol', why: 'Precursor for pregnenolone→testosterone pathway' },
+    { nutrient: 'Zinc',                key: 'zn',     field: 'zn',     unit: '%DV', threshold: 8,  target: 100, why: 'Directly supports testosterone synthesis in Leydig cells' },
+    { nutrient: 'Vitamin D',           key: 'vitD',   field: 'vitD',   unit: '%DV', threshold: 5,  target: 100, why: 'Correlates with T levels; RCT showed +25% T with supplementation' },
+    { nutrient: 'Magnesium',           key: 'mg',     field: 'mg_',    unit: '%DV', threshold: 8,  target: 100, why: 'Increases free testosterone by reducing SHBG binding' },
+    { nutrient: 'Omega-3',             key: 'o3',     field: 'omega3', unit: 'g',   threshold: 0.1,target: 1.6, why: 'Reduces inflammatory cytokines that suppress T production' },
+    { nutrient: 'Selenium',            key: 'se',     field: 'se',     unit: '%DV', threshold: 15, target: 100, why: 'Essential for sperm production and thyroid conversion (T4→T3)' },
+    { nutrient: 'B12',                 key: 'b12',    field: 'vitB12', unit: '%DV', threshold: 8,  target: 100, why: 'Supports energy metabolism and red blood cell production' },
+    { nutrient: 'DIM (cruciferous)',   key: 'DIM',    dimByCat: true,                              target: 1,   why: 'Promotes healthy estrogen metabolism via 2-OH pathway' },
+    { nutrient: 'Cholesterol (dietary)', key: 'chol', field: 'chol',   unit: 'mg',  threshold: 30, target: 200, why: 'Precursor for pregnenolone→testosterone pathway' },
   ];
   return [
-    { nutrient: 'Iron', key: 'fe', why: 'Replaces menstrual losses; deficiency disrupts thyroid and ovulation' },
-    { nutrient: 'Magnesium', key: 'mg', why: 'Supports progesterone production and reduces cortisol' },
-    { nutrient: 'Omega-3', key: 'o3', why: 'Anti-inflammatory prostaglandin balance, reduces dysmenorrhea' },
-    { nutrient: 'B12', key: 'b12', why: 'Supports ovulation regularity and energy metabolism' },
-    { nutrient: 'Vitamin D', key: 'vitD', why: 'Linked to fertility, PCOS management, and mood regulation' },
-    { nutrient: 'Calcium', key: 'ca', why: 'Alleviates PMS symptoms; supports bone density' },
-    { nutrient: 'Folate', key: 'folate', why: 'Essential for reproductive health and DNA methylation' },
-    { nutrient: 'DIM (cruciferous)', key: 'DIM', why: 'Supports healthy estrogen detoxification pathways' },
+    { nutrient: 'Iron',              key: 'fe',     field: 'fe',     unit: '%DV', threshold: 8,  target: 100, why: 'Replaces menstrual losses; deficiency disrupts thyroid and ovulation' },
+    { nutrient: 'Magnesium',         key: 'mg',     field: 'mg_',    unit: '%DV', threshold: 8,  target: 100, why: 'Supports progesterone production and reduces cortisol' },
+    { nutrient: 'Omega-3',           key: 'o3',     field: 'omega3', unit: 'g',   threshold: 0.1,target: 1.1, why: 'Anti-inflammatory prostaglandin balance, reduces dysmenorrhea' },
+    { nutrient: 'B12',               key: 'b12',    field: 'vitB12', unit: '%DV', threshold: 8,  target: 100, why: 'Supports ovulation regularity and energy metabolism' },
+    { nutrient: 'Vitamin D',         key: 'vitD',   field: 'vitD',   unit: '%DV', threshold: 5,  target: 100, why: 'Linked to fertility, PCOS management, and mood regulation' },
+    { nutrient: 'Calcium',           key: 'ca',     field: 'ca',     unit: '%DV', threshold: 8,  target: 100, why: 'Alleviates PMS symptoms; supports bone density' },
+    { nutrient: 'Folate',            key: 'folate', field: 'folate', unit: '%DV', threshold: 8,  target: 100, why: 'Essential for reproductive health and DNA methylation' },
+    { nutrient: 'DIM (cruciferous)', key: 'DIM',    dimByCat: true,                              target: 1,   why: 'Supports healthy estrogen detoxification pathways' },
   ];
+}
+
+// Foods that supply DIM via glucosinolate→DIM conversion. Match by name
+// substring against the FOODS list since there's no `dim` numeric column.
+const CRUCIFEROUS = /broccoli|cabbage|kale|cauliflower|brussels|bok choy|collard|arugula/i;
+
+function HormoneRow({ goal, plan, totals, contributorsByNutrient }) {
+  const [expanded, setExpanded] = useState(false);
+
+  // Build the contributors list from the plan based on the goal's binding.
+  let sources = [];
+  let totalAmount = 0;
+  if (goal.dimByCat) {
+    sources = plan
+      .filter(f => CRUCIFEROUS.test(f.name))
+      .map(f => ({ id: f.id, name: f.name, servings: f.servings, amount: f.servings }))
+      .sort((a, b) => b.amount - a.amount);
+    totalAmount = sources.reduce((s, x) => s + x.amount, 0);
+  } else {
+    sources = plan
+      .map(f => ({ id: f.id, name: f.name, servings: f.servings, amount: +(((f[goal.field] || 0) * f.servings).toFixed(2)) }))
+      .filter(x => x.amount >= goal.threshold)
+      .sort((a, b) => b.amount - a.amount);
+    totalAmount = +(plan.reduce((s, f) => s + (f[goal.field] || 0) * f.servings, 0).toFixed(1));
+  }
+
+  const pct       = goal.target > 0 ? totalAmount / goal.target : 0;
+  const status    = pct >= 1 ? 'good' : pct >= 0.5 ? 'partial' : 'short';
+  const dotColor  = status === 'good' ? 'bg-sage-400' : status === 'partial' ? 'bg-terra-400' : 'bg-red-400';
+  const numColor  = status === 'good' ? 'text-sage-600' : status === 'partial' ? 'text-terra-600' : 'text-red-500';
+
+  const totalLabel = goal.dimByCat
+    ? `${totalAmount} serv${totalAmount === 1 ? '' : 's'}`
+    : `${totalAmount}${goal.unit === '%DV' ? '%' : goal.unit}`;
+
+  return (
+    <div className="py-2 border-b border-stone-100 last:border-0">
+      <button
+        onClick={() => setExpanded(e => !e)}
+        className="w-full flex items-center gap-3 text-left hover:bg-stone-50 -mx-2 px-2 py-1 rounded-lg transition"
+      >
+        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold text-stone-800">{goal.nutrient}</div>
+          <div className="text-xs text-stone-400 leading-snug">{goal.why}</div>
+        </div>
+        <div className="text-right flex-shrink-0">
+          <div className={`text-xs font-bold font-mono ${numColor}`}>
+            {sources.length} source{sources.length !== 1 ? 's' : ''} · {totalLabel}
+          </div>
+          {!expanded && sources.length > 0 && (
+            <div className="text-2xs text-stone-400 max-w-[180px] text-right truncate">
+              {sources.slice(0, 2).map(s => s.name).join(', ')}{sources.length > 2 ? '…' : ''}
+            </div>
+          )}
+        </div>
+        <span className="text-stone-300 text-xs ml-1">{expanded ? '▾' : '▸'}</span>
+      </button>
+      {expanded && (
+        <div className="mt-2 ml-5 pl-3 border-l-2 border-stone-100">
+          {sources.length === 0 ? (
+            <div className="text-xs text-stone-400 italic">
+              No plan items contribute meaningful {goal.nutrient.toLowerCase()}. Try adding {goal.dimByCat
+                ? 'broccoli, cabbage, kale, or cauliflower.'
+                : suggestionsFor(goal.key)}
+            </div>
+          ) : (
+            <div className="grid grid-cols-[1fr_auto_auto] gap-x-3 gap-y-1 text-xs">
+              {sources.map(s => (
+                <Fragment key={s.id}>
+                  <span className="text-stone-700">{s.name}</span>
+                  <span className="font-mono text-stone-400">{s.servings}×</span>
+                  <span className="font-mono text-stone-700 text-right">
+                    {goal.dimByCat ? '✓' : `${s.amount}${goal.unit === '%DV' ? '%' : goal.unit}`}
+                  </span>
+                </Fragment>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclude }) {
+  const [filter, setFilter]   = useState('');
+  const [catFilter, setCat]   = useState('all');
+  const [sort, setSort]       = useState({ col: 'pd', dir: 'desc' });
+
+  const rows = useMemo(() => {
+    const costMult = effectiveCostIndex / 100;
+    const enriched = FOODS.map(f => {
+      const price = (f.price[city.region] ?? f.price.us) * costMult;
+      const pd = +(f.p / Math.max(0.01, price)).toFixed(1);
+      return { ...f, _price: +price.toFixed(2), _pd: pd };
+    });
+    return enriched.filter(f => {
+      if (catFilter !== 'all' && f.cat !== catFilter) return false;
+      if (filter && !f.name.toLowerCase().includes(filter.toLowerCase())) return false;
+      return true;
+    });
+  }, [city.region, effectiveCostIndex, filter, catFilter]);
+
+  const getters = {
+    name: f => f.name.toLowerCase(),
+    cat:  f => f.cat,
+    p:    f => f.p,
+    cal:  f => f.cal,
+    price:f => f._price,
+    pd:   f => f._pd,
+    fib:  f => f.fib,
+    micro:f => f.micro,
+  };
+  const sorted = applySort(rows, sort, getters);
+
+  return (
+    <div className="bg-white rounded-2xl border border-stone-200 p-4 overflow-x-auto">
+      <div className="flex justify-between items-center mb-3 gap-3 flex-wrap">
+        <div>
+          <h2 className="font-display text-lg font-bold">Food Database</h2>
+          <p className="text-xs text-stone-400">Click any column header to sort · tap ✕ to exclude</p>
+        </div>
+        {excluded.size > 0 && (
+          <button onClick={() => setExcluded(new Set())} className="pill pill-inactive text-xs">Reset ({excluded.size})</button>
+        )}
+      </div>
+      <div className="flex gap-2 mb-3 flex-wrap items-center">
+        <input
+          type="text"
+          value={filter}
+          onChange={e => setFilter(e.target.value)}
+          placeholder="Filter by name…"
+          className="px-3 py-1.5 rounded-lg border border-stone-200 text-xs focus:outline-none focus:border-terra-400 flex-1 min-w-[160px]"
+        />
+        <select
+          value={catFilter}
+          onChange={e => setCat(e.target.value)}
+          className="px-3 py-1.5 rounded-lg border border-stone-200 text-xs bg-white focus:outline-none focus:border-terra-400"
+        >
+          <option value="all">All categories</option>
+          {Object.entries(CATEGORIES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+        </select>
+        <span className="text-2xs text-stone-400 font-mono">{sorted.length} foods</span>
+      </div>
+      <div className="flex gap-2 flex-wrap mb-3">
+        {Object.entries(CATEGORIES).map(([k, v]) => (
+          <span key={k} className="flex items-center gap-1 text-2xs text-stone-400">
+            <span className="w-1.5 h-1.5 rounded-full" style={{ background: v.color }} />
+            {v.label}
+          </span>
+        ))}
+      </div>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b-2 border-stone-200">
+            <th className="py-2 px-1 w-3" />
+            <SortHeader id="name"  sort={sort} setSort={setSort}>Food</SortHeader>
+            <th className="py-2 px-1 text-left text-2xs uppercase tracking-wider text-stone-400 font-medium">Unit</th>
+            <SortHeader id="p"     sort={sort} setSort={setSort}>Prot</SortHeader>
+            <SortHeader id="cal"   sort={sort} setSort={setSort}>Cal</SortHeader>
+            <SortHeader id="price" sort={sort} setSort={setSort}>Cost ({city.region.toUpperCase()})</SortHeader>
+            <SortHeader id="pd"    sort={sort} setSort={setSort}>P/$</SortHeader>
+            <SortHeader id="fib"   sort={sort} setSort={setSort}>Fiber</SortHeader>
+            <SortHeader id="micro" sort={sort} setSort={setSort}>Micro</SortHeader>
+            <th className="py-2 px-1" />
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map(f => {
+            const isExcl = excluded.has(f.id);
+            return (
+              <tr key={f.id} className={`border-b border-stone-50 ${isExcl ? 'opacity-30' : ''}`}>
+                <td className="py-1.5 px-1">
+                  <span className="w-1.5 h-1.5 rounded-full inline-block" title={CATEGORIES[f.cat]?.label} style={{ background: CATEGORIES[f.cat]?.color }} />
+                </td>
+                <td className="py-1.5 px-1 font-medium text-stone-700">{f.name}</td>
+                <td className="py-1.5 px-1 text-stone-400 text-2xs">{f.unit}</td>
+                <td className="py-1.5 px-1 font-mono font-semibold text-sage-600">{f.p}g</td>
+                <td className="py-1.5 px-1 font-mono text-stone-400">{f.cal}</td>
+                <td className="py-1.5 px-1 font-mono text-terra-600">${f._price.toFixed(2)}</td>
+                <td className="py-1.5 px-1 font-mono font-bold" style={{ color: f._pd > 30 ? '#3D6340' : f._pd > 18 ? '#B24F1C' : '#918779' }}>{f._pd}</td>
+                <td className="py-1.5 px-1 text-stone-400">{f.fib}g</td>
+                <td className="py-1.5 px-1"><MicroBarWithTip food={f} /></td>
+                <td className="py-1.5 px-1">
+                  <button onClick={() => toggleExclude(f.id)} className={`text-xs ${isExcl ? 'text-sage-600' : 'text-red-400 hover:text-red-600'}`}>
+                    {isExcl ? '+' : '✕'}
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function suggestionsFor(key) {
+  return ({
+    zn:     'oysters, beef, pumpkin seeds, lentils.',
+    vitD:   'salmon, sardines, fortified milk, egg yolks.',
+    mg:     'pumpkin seeds, almonds, spinach, dark chocolate.',
+    o3:     'salmon, sardines, walnuts, flax/chia seeds.',
+    se:     'Brazil nuts, tuna, sardines, sunflower seeds.',
+    b12:    'beef liver, sardines, eggs, dairy, fortified plant milk.',
+    chol:   'eggs, shellfish, organ meats.',
+    fe:     'beef liver, lentils, dark leafy greens (with vit C).',
+    ca:     'sardines (with bones), dairy, fortified plant milk.',
+    folate: 'lentils, asparagus, leafy greens, fortified grains.',
+  })[key] || 'a wider variety of whole foods.';
 }

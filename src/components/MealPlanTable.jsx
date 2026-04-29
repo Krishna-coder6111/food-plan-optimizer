@@ -1,35 +1,21 @@
 'use client';
 
+import { useState } from 'react';
 import { CATEGORIES } from '../data/foods';
+import MicroBarWithTip from './MicroBarWithTip';
+import { SortHeader, applySort } from './SortHeader';
 
 /**
- * MealPlanTable — the daily plan with:
- *   - per-row quantity adjust (−/+ with a lock icon to pin exactly)
+ * MealPlanTable — daily plan with:
+ *   - per-row quantity adjust (−/+, with a lock icon to pin exactly)
  *   - per-row exclude (×)
+ *   - sortable columns (click any header)
+ *   - hover the Micro bar to see which nutrients the food provides
  *
  * Locks are passed as a Map(foodId → servings). When the user clicks
  * +/−, we bump the count and tell the parent, which updates the locks
- * prop and re-runs the optimizer. The optimizer will keep that food at
- * exactly that count and re-solve the rest of the plan around it.
- *
- * Leaving a food "unlocked" means the optimizer is free to place it
- * anywhere in [0, MAX_SERVINGS[cat]].
+ * prop and re-runs the optimizer.
  */
-
-function MicroBar({ value, max = 10 }) {
-  const count = Math.round(Math.min(value / max, 1) * 10);
-  return (
-    <div className="flex gap-px">
-      {Array.from({ length: 10 }, (_, i) => (
-        <div
-          key={i}
-          className="w-0.5 h-3 rounded-sm"
-          style={{ background: i < count ? '#3D6340' : '#E8E4DD' }}
-        />
-      ))}
-    </div>
-  );
-}
 
 function QtyControl({ food, lockedQty, onLock, onUnlock }) {
   const isLocked = lockedQty != null;
@@ -37,7 +23,7 @@ function QtyControl({ food, lockedQty, onLock, onUnlock }) {
 
   const bump = (delta) => {
     const next = Math.max(0, current + delta);
-    if (next === 0) onUnlock(food.id);  // unlock + exclude route — but 0 means just remove it from plan
+    if (next === 0) onUnlock(food.id);
     else onLock(food.id, next);
   };
 
@@ -70,6 +56,8 @@ function QtyControl({ food, lockedQty, onLock, onUnlock }) {
 }
 
 export default function MealPlanTable({ plan, totals, targets, locks, onLock, onUnlock, onExclude }) {
+  const [sort, setSort] = useState({ col: 'protein', dir: 'desc' });
+
   if (!plan.length) {
     return (
       <div className="bg-white rounded-2xl border border-stone-200 p-6 text-center text-sm text-stone-500">
@@ -78,30 +66,61 @@ export default function MealPlanTable({ plan, totals, targets, locks, onLock, on
     );
   }
 
+  // Pre-compute totals for each row that the user might want to sort by.
+  const enriched = plan.map(f => ({
+    ...f,
+    _protein: +(f.p * f.servings).toFixed(0),
+    _cal:     +(f.cal * f.servings).toFixed(0),
+    _carbs:   +((f.carb || 0) * f.servings).toFixed(0),
+    _fat:     +((f.f || 0) * f.servings).toFixed(0),
+    _fib:     +((f.fib || 0) * f.servings).toFixed(0),
+    _cost:    f.totalCost,
+  }));
+
+  const getters = {
+    name:    f => f.name.toLowerCase(),
+    qty:     f => f.servings,
+    protein: f => f._protein,
+    cal:     f => f._cal,
+    carbs:   f => f._carbs,
+    fat:     f => f._fat,
+    cost:    f => f._cost,
+    fib:     f => f._fib,
+    micro:   f => f.micro,
+  };
+  const sorted = applySort(enriched, sort, getters);
+
   return (
     <div className="bg-white rounded-2xl border border-stone-200 p-4 mb-4 overflow-x-auto shadow-sm">
       <div className="flex justify-between items-baseline mb-3">
         <h2 className="font-display text-lg font-bold">Daily Meal Plan</h2>
-        <span className="text-2xs text-stone-400">−/+ to adjust · × to exclude</span>
+        <span className="text-2xs text-stone-400">click a column to sort · −/+ to adjust · × to exclude</span>
       </div>
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b-2 border-stone-200 text-left">
-            {['', 'Food', 'Qty', 'Protein', 'Cal', 'Cost', 'Fiber', 'Micro', ''].map((h, i) => (
-              <th key={i} className="py-2 px-1 text-2xs uppercase tracking-wider text-stone-400 font-medium whitespace-nowrap">
-                {h}
-              </th>
-            ))}
+          <tr className="border-b-2 border-stone-200">
+            <th className="py-2 px-1 w-3" />
+            <SortHeader id="name"    sort={sort} setSort={setSort}>Food</SortHeader>
+            <SortHeader id="qty"     sort={sort} setSort={setSort}>Qty</SortHeader>
+            <SortHeader id="protein" sort={sort} setSort={setSort}>Protein</SortHeader>
+            <SortHeader id="cal"     sort={sort} setSort={setSort}>Cal</SortHeader>
+            <SortHeader id="carbs"   sort={sort} setSort={setSort}>Carbs</SortHeader>
+            <SortHeader id="fat"     sort={sort} setSort={setSort}>Fat</SortHeader>
+            <SortHeader id="cost"    sort={sort} setSort={setSort}>Cost</SortHeader>
+            <SortHeader id="fib"     sort={sort} setSort={setSort}>Fiber</SortHeader>
+            <SortHeader id="micro"   sort={sort} setSort={setSort}>Micro</SortHeader>
+            <th className="py-2 px-1" />
           </tr>
         </thead>
         <tbody>
-          {plan.map(f => {
+          {sorted.map(f => {
             const lockedQty = locks?.get(f.id);
             return (
               <tr key={f.id} className="border-b border-stone-100 hover:bg-stone-50/50">
                 <td className="py-2 px-1">
                   <span
                     className="w-2 h-2 rounded-full inline-block"
+                    title={CATEGORIES[f.cat]?.label}
                     style={{ background: CATEGORIES[f.cat]?.color || '#999' }}
                   />
                 </td>
@@ -110,18 +129,15 @@ export default function MealPlanTable({ plan, totals, targets, locks, onLock, on
                   <div className="text-2xs text-stone-400">{f.unit}</div>
                 </td>
                 <td className="py-2 px-1">
-                  <QtyControl
-                    food={f}
-                    lockedQty={lockedQty}
-                    onLock={onLock}
-                    onUnlock={onUnlock}
-                  />
+                  <QtyControl food={f} lockedQty={lockedQty} onLock={onLock} onUnlock={onUnlock} />
                 </td>
-                <td className="py-2 px-1 font-mono font-bold text-sage-700">{(f.p * f.servings).toFixed(0)}g</td>
-                <td className="py-2 px-1 font-mono text-stone-500">{(f.cal * f.servings).toFixed(0)}</td>
-                <td className="py-2 px-1 font-mono font-semibold text-terra-600">${f.totalCost.toFixed(2)}</td>
-                <td className="py-2 px-1 text-stone-500">{(f.fib * f.servings).toFixed(0)}g</td>
-                <td className="py-2 px-1"><MicroBar value={f.micro} /></td>
+                <td className="py-2 px-1 font-mono font-bold text-sage-700">{f._protein}g</td>
+                <td className="py-2 px-1 font-mono text-stone-500">{f._cal}</td>
+                <td className="py-2 px-1 font-mono text-stone-500">{f._carbs}g</td>
+                <td className="py-2 px-1 font-mono text-stone-500">{f._fat}g</td>
+                <td className="py-2 px-1 font-mono font-semibold text-terra-600">${f._cost.toFixed(2)}</td>
+                <td className="py-2 px-1 text-stone-500">{f._fib}g</td>
+                <td className="py-2 px-1"><MicroBarWithTip food={f} servings={f.servings} /></td>
                 <td className="py-2 px-1">
                   <button
                     onClick={() => onExclude(f.id)}
@@ -139,15 +155,19 @@ export default function MealPlanTable({ plan, totals, targets, locks, onLock, on
             <td className="py-2 px-1" />
             <td className="py-2 px-1 font-mono font-bold text-sage-700">
               {totals.protein}g
-              <span className="block text-2xs font-normal text-stone-400">
-                target {targets.protein}g
-              </span>
+              <span className="block text-2xs font-normal text-stone-400">target {targets.protein}g</span>
             </td>
             <td className="py-2 px-1 font-mono font-bold">
               {totals.calories}
-              <span className="block text-2xs font-normal text-stone-400">
-                target {targets.calories}
-              </span>
+              <span className="block text-2xs font-normal text-stone-400">target {targets.calories}</span>
+            </td>
+            <td className="py-2 px-1 font-mono font-bold">
+              {totals.carbs}g
+              <span className="block text-2xs font-normal text-stone-400">target {targets.carbs}g</span>
+            </td>
+            <td className="py-2 px-1 font-mono font-bold">
+              {totals.fat}g
+              <span className="block text-2xs font-normal text-stone-400">target {targets.fat}g</span>
             </td>
             <td className="py-2 px-1 font-mono font-bold text-terra-600">${totals.cost}</td>
             <td className="py-2 px-1 font-bold">{totals.fiber}g</td>

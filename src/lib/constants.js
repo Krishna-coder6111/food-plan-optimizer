@@ -61,20 +61,38 @@ export const MAX_SERVINGS = {
  *   This is why the previous version kept hitting deficient on vitA/C/D —
  *   even with constraints met, the solver has no reason to go past min.
  */
+/**
+ * `storage` describes the body's reservoir for that nutrient and is used
+ * by the UI to soften "deficient" warnings for nutrients you don't need
+ * every day:
+ *   - 'water'  : water-soluble, no real storage. Aim daily.
+ *   - 'fat'    : fat-soluble, body stockpiles a few days–weeks. Weekly avg matters.
+ *   - 'long'   : multi-month+ stores (B12 in liver, Fe as ferritin, Ca in bones).
+ *                A single low-intake day is irrelevant; chronic shortfall matters.
+ */
 export const NUTRIENT_OPTIMA = {
-  vitA:   { min: 80,  opt: 120, max: 300,  label: 'Vitamin A' },
-  vitC:   { min: 80,  opt: 150, max: 2000, label: 'Vitamin C' },
-  vitD:   { min: 60,  opt: 150, max: 400,  label: 'Vitamin D' },
-  vitE:   { min: 60,  opt: 120, max: 700,  label: 'Vitamin E' },
-  vitK:   { min: 80,  opt: 150, max: 0,    label: 'Vitamin K' },  // max=0 → no ceiling
-  vitB6:  { min: 80,  opt: 130, max: 5000, label: 'Vitamin B6' },
-  vitB12: { min: 80,  opt: 200, max: 0,    label: 'Vitamin B12' },
-  folate: { min: 70,  opt: 130, max: 250,  label: 'Folate' },
-  ca:     { min: 70,  opt: 110, max: 250,  label: 'Calcium' },
-  fe:     { min: 80,  opt: 120, max: 250,  label: 'Iron' },
-  zn:     { min: 80,  opt: 120, max: 360,  label: 'Zinc' },
-  mg_:    { min: 80,  opt: 130, max: 0,    label: 'Magnesium' },
-  se:     { min: 70,  opt: 120, max: 730,  label: 'Selenium' },
+  vitA:   { min: 80,  opt: 120, max: 300,  label: 'Vitamin A',  storage: 'fat'   },
+  vitC:   { min: 80,  opt: 150, max: 2000, label: 'Vitamin C',  storage: 'water' },
+  vitD:   { min: 60,  opt: 150, max: 400,  label: 'Vitamin D',  storage: 'fat'   },
+  vitE:   { min: 60,  opt: 120, max: 700,  label: 'Vitamin E',  storage: 'fat'   },
+  vitK:   { min: 80,  opt: 150, max: 0,    label: 'Vitamin K',  storage: 'fat'   },
+  vitB6:  { min: 80,  opt: 130, max: 5000, label: 'Vitamin B6', storage: 'water' },
+  vitB12: { min: 80,  opt: 200, max: 0,    label: 'Vitamin B12',storage: 'long'  },
+  folate: { min: 70,  opt: 130, max: 250,  label: 'Folate',     storage: 'water' },
+  ca:     { min: 70,  opt: 110, max: 250,  label: 'Calcium',    storage: 'long'  },
+  fe:     { min: 80,  opt: 120, max: 250,  label: 'Iron',       storage: 'long'  },
+  zn:     { min: 80,  opt: 120, max: 360,  label: 'Zinc',       storage: 'water' },
+  mg_:    { min: 80,  opt: 130, max: 0,    label: 'Magnesium',  storage: 'water' },
+  se:     { min: 70,  opt: 120, max: 730,  label: 'Selenium',   storage: 'water' },
+};
+
+/**
+ * STORAGE_NOTES — copy strings the UI uses to explain the storage horizon.
+ */
+export const STORAGE_NOTES = {
+  water: { tag: 'daily',  label: 'Water-soluble — no body store, aim for the floor every day.' },
+  fat:   { tag: 'weekly', label: 'Fat-soluble — body stockpiles for ~1–4 weeks, weekly average matters.' },
+  long:  { tag: 'months', label: 'Long-term store — body holds months to years of supply, chronic shortfall is what counts.' },
 };
 
 /**

@@ -1,9 +1,15 @@
 name: Deploy to GitHub Pages
 
-# Build the static export and publish it on every push to main. The
-# `enablement: true` flag on configure-pages auto-creates the Pages site
-# on first run, so the user does NOT need to flip the Settings → Pages
-# toggle manually.
+# Build the static export and publish it on every push to main.
+#
+# ONE-TIME SETUP REQUIRED before the first deploy:
+#   1. Go to repo Settings → Pages
+#   2. Set "Source" to "GitHub Actions"
+#   3. Save
+# (The previous version tried `enablement: true` to do this automatically,
+# but the workflow's GITHUB_TOKEN does not have permission to create the
+# Pages site — that's an admin-level operation, hence the
+# "Resource not accessible by integration" failure.)
 
 on:
   push:
@@ -53,11 +59,6 @@ jobs:
         run: touch out/.nojekyll
 
       - uses: actions/configure-pages@v5
-        with:
-          # Auto-enable Pages on first deploy. Without this, the action
-          # 404s on a brand-new repo because the Pages site doesn't exist
-          # yet — exactly the failure mode we hit on the previous run.
-          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:

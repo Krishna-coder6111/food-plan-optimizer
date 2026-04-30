@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "pipeline": "cd data/pipeline && python3 build_all.py"
+    "pipeline": "cd data/pipeline && python3 build_all.py && python3 emit_overrides.py"
   },
   "dependencies": {
     "d3-geo": "^3.1.1",

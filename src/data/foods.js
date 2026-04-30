@@ -1,8 +1,11 @@
+import { BLS_OVERRIDES } from './blsOverrides';
+
 /**
  * NUTRIENT ENGINE — Food Database
  *
  * Nutrition data: USDA FoodData Central SR Legacy (per serving)
- * Pricing: BLS Average Retail Prices (Feb 2026) + regional adjustments
+ * Pricing: BLS Average Retail Prices (Feb 2026) + regional adjustments,
+ *          patched per-food by `BLS_OVERRIDES` if the pipeline has been run.
  * Hormone tags: from peer-reviewed research (see roadmap doc for citations)
  *
  * When you run `npm run pipeline`, this file gets replaced with
@@ -40,7 +43,9 @@ export const CATEGORIES = {
   supplement: { label: 'Supplements',     color: '#6B6358' },
 };
 
-export const FOODS = [
+// Hand-curated baseline. Live BLS prices, when available, override these
+// per-food per-region via BLS_OVERRIDES at the bottom of this file.
+const FOODS_BASE = [
   // ─── POULTRY ──────────────────────────────────────────────────────────
   { id:1,  name:'Chicken Breast',       unit:'4 oz',       cat:'poultry',   p:26, cal:120, f:1.5,  sf:0.3, mf:0.4, chol:73,  carb:0,   fib:0, sug:0, na:60,  k:220, ca:1, fe:3,  vitA:0,  vitC:0,  vitD:0,  vitE:1,  vitK:0, vitB6:30, vitB12:5,  folate:1,  zn:6,   mg_:6,  se:40, omega3:0.02, micro:4, price:{us:1.10,ne:1.25,mw:1.05,so:0.95,we:1.20}, hormoneM:['zn','se'],              hormoneF:['fe','b12'] },
   { id:2,  name:'Chicken Thigh',        unit:'4 oz',       cat:'poultry',   p:22, cal:170, f:9,    sf:2.5, mf:3.5, chol:95,  carb:0,   fib:0, sug:0, na:75,  k:200, ca:1, fe:5,  vitA:1,  vitC:0,  vitD:0,  vitE:1,  vitK:2, vitB6:18, vitB12:8,  folate:1,  zn:8,   mg_:5,  se:25, omega3:0.03, micro:4, price:{us:0.72,ne:0.82,mw:0.68,so:0.62,we:0.78}, hormoneM:['zn'],                   hormoneF:['fe','b12'] },
@@ -139,6 +144,15 @@ export const FOODS = [
   { id:120,name:'Whey Protein',         unit:'1 scoop',    cat:'supplement',p:24, cal:120, f:1,    sf:0.5, mf:0,   chol:30,  carb:3,   fib:0, sug:1, na:50,  k:160, ca:10,fe:0,  vitA:0,  vitC:0,  vitD:0,  vitE:0,  vitK:0,  vitB6:0, vitB12:0,  folate:0,  zn:3,   mg_:2,  se:5,  omega3:0,    micro:1, price:{us:0.65,ne:0.70,mw:0.62,so:0.58,we:0.68}, hormoneM:['leucine'],              hormoneF:[] },
   { id:121,name:'Casein Protein',       unit:'1 scoop',    cat:'supplement',p:24, cal:120, f:1,    sf:0.5, mf:0,   chol:20,  carb:3,   fib:0, sug:1, na:80,  k:100, ca:40,fe:0,  vitA:0,  vitC:0,  vitD:0,  vitE:0,  vitK:0,  vitB6:0, vitB12:0,  folate:0,  zn:3,   mg_:2,  se:5,  omega3:0,    micro:1, price:{us:0.75,ne:0.82,mw:0.72,so:0.68,we:0.78}, hormoneM:['ca'],                   hormoneF:['ca'] },
 ];
+
+// Apply BLS overrides on top of the hand-curated baseline. Each entry in
+// BLS_OVERRIDES[id] is a partial price record; the spread merges so that
+// regions absent from the BLS data fall back to the curated values.
+export const FOODS = FOODS_BASE.map(f => {
+  const override = BLS_OVERRIDES[f.id];
+  if (!override) return f;
+  return { ...f, price: { ...f.price, ...override } };
+});
 
 // Region labels for the pricing keys
 export const REGIONS = {

@@ -1,12 +1,14 @@
 'use client';
 
-import { useState, useMemo, useCallback, Fragment } from 'react';
+import { useState, useMemo, useCallback, useEffect, Fragment } from 'react';
 import { FOODS, CATEGORIES, REGIONS } from '../data/foods';
 import { CITIES, CITY_MAP } from '../data/cities';
 import { MACRO_PRESETS, ACTIVITY_LEVELS, MAX_SERVINGS, STORE_TIERS } from '../lib/constants';
 import { calcTDEE, calcTargets } from '../lib/tdee';
 import { useOptimizer } from '../lib/useOptimizer';
 import { usePersistentState, setSerialize, setDeserialize, mapSerialize, mapDeserialize } from '../lib/usePersistentState';
+import { loadProfiles, saveProfiles, captureSnapshot, makeProfileId, PROFILE_FIELDS } from '../lib/profiles';
+import { buildWeek, weeklyAverages } from '../lib/weeklyPlan';
 
 import UsMap from '../components/UsMap';
 import MealPlanTable from '../components/MealPlanTable';
@@ -50,6 +52,52 @@ export default function Home() {
   });
   const [tab, setTab]           = useState('plan');
   const [showProfile, setShowProfile] = useState(true);
+
+  // Saved profile slots — multiple named snapshots of the full profile.
+  // Lives in localStorage under `ne.profiles`; loaded post-mount to avoid
+  // SSR/hydration drift.
+  const [savedProfiles, setSavedProfiles] = useState([]);
+  useEffect(() => { setSavedProfiles(loadProfiles()); }, []);
+
+  const profileSetters = {
+    gender: setGender, age: setAge, heightFt: setHeightFt, heightIn: setHeightIn,
+    weightLbs: setWeightLbs, activity: setActivity, cityId: setCityId,
+    presetId: setPresetId, storeTierId: setStoreTierId,
+  };
+  const currentSnapshot = { gender, age, heightFt, heightIn, weightLbs, activity, cityId, presetId, storeTierId };
+
+  const onLoadProfile = useCallback((id) => {
+    const p = savedProfiles.find(x => x.id === id);
+    if (!p) return;
+    for (const field of PROFILE_FIELDS) {
+      if (p.snapshot[field] != null && profileSetters[field]) profileSetters[field](p.snapshot[field]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedProfiles]);
+
+  const onSaveProfile = useCallback((name) => {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return;
+    setSavedProfiles(prev => {
+      // Replace if same name exists, else append.
+      const existing = prev.find(p => p.name === trimmed);
+      const snapshot = captureSnapshot(currentSnapshot);
+      const next = existing
+        ? prev.map(p => p.name === trimmed ? { ...p, snapshot } : p)
+        : [...prev, { id: makeProfileId(), name: trimmed, snapshot }];
+      saveProfiles(next);
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gender, age, heightFt, heightIn, weightLbs, activity, cityId, presetId, storeTierId]);
+
+  const onDeleteProfile = useCallback((id) => {
+    setSavedProfiles(prev => {
+      const next = prev.filter(p => p.id !== id);
+      saveProfiles(next);
+      return next;
+    });
+  }, []);
 
   const city    = CITIES[CITY_MAP[cityId]] || CITIES[0];
   const preset  = MACRO_PRESETS[presetId];
@@ -114,6 +162,7 @@ export default function Home() {
 
   const tabs = [
     { id: 'plan',     label: 'Meal Plan' },
+    { id: 'weekly',   label: 'Weekly' },
     { id: 'micro',    label: 'Micronutrients' },
     { id: 'map',      label: 'City Map' },
     { id: 'hormones', label: gender === 'male' ? 'T Support' : 'Hormones' },
@@ -157,6 +206,12 @@ export default function Home() {
       {/* profile panel */}
       {showProfile && (
         <section className="bg-white rounded-2xl border border-stone-200 p-4 mb-4 shadow-sm">
+          <ProfileSlots
+            saved={savedProfiles}
+            onLoad={onLoadProfile}
+            onSave={onSaveProfile}
+            onDelete={onDeleteProfile}
+          />
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
             <div>
               <label className="text-2xs uppercase tracking-wider text-stone-400 font-medium block mb-1">Gender</label>
@@ -354,6 +409,19 @@ export default function Home() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ═══════ WEEKLY TAB ═══════ */}
+      {tab === 'weekly' && (
+        <WeeklyView
+          foods={availableFoods}
+          targets={targets}
+          region={city.region}
+          costIndex={effectiveCostIndex}
+          gender={gender}
+          locks={locks}
+          city={city}
+        />
       )}
 
       {/* ═══════ MICRONUTRIENT TAB ═══════ */}
@@ -564,6 +632,111 @@ function HormoneRow({ goal, plan, totals, contributorsByNutrient }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function WeeklyView({ foods, targets, region, costIndex, gender, locks, city }) {
+  // Compute the 7-day rotation. Re-runs whenever the input signature
+  // changes (food set / targets / region / tier / locks). 7 LPs at ~10ms
+  // each = ~70ms total; fine to compute synchronously inside useMemo.
+  const week = useMemo(
+    () => buildWeek(foods, targets, region, costIndex, gender, { locks }),
+    // We only depend on the same primitive signature the daily hook does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [foods.map(f => f.id).join(','), targets.calories, targets.protein, targets.carbs, targets.fat, targets.fiber, region, costIndex, gender, [...locks].sort().join(',')],
+  );
+  const avg = useMemo(() => weeklyAverages(week), [week]);
+
+  return (
+    <div>
+      <div className="bg-white rounded-2xl border border-stone-200 p-4 mb-4 shadow-sm">
+        <div className="flex items-baseline justify-between mb-1 flex-wrap gap-2">
+          <h2 className="font-display text-lg font-bold">7-Day Plan</h2>
+          <span className="text-2xs text-stone-400 font-mono">
+            ${avg.cost} / week · ${avg.avgCost} avg / day · {avg.avgProtein}g P · {avg.avgCalories} kcal
+          </span>
+        </div>
+        <p className="text-xs text-stone-400 mb-3">
+          Each day rotates a different protein category to give you actual variety. Solving 7 LPs in parallel; numbers are this day&apos;s plan, not the week sum.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {week.map((d, i) => (
+          <div key={i} className="bg-white rounded-2xl border border-stone-200 p-3 shadow-sm">
+            <div className="flex items-baseline justify-between mb-1">
+              <h3 className="font-display text-base font-bold">
+                <span className="text-2xs uppercase tracking-wider text-stone-400 mr-1.5">{d.day}</span>
+                <span>{d.icon} {d.label}</span>
+              </h3>
+              <span className="text-xs font-mono text-terra-600 font-bold">${d.totals.cost}</span>
+            </div>
+            <div className="text-2xs font-mono text-stone-400 mb-2">
+              {d.totals.protein}g P · {d.totals.calories} kcal · {d.totals.fiber}g fib
+              {d.relaxed.length > 0 && <span className="text-amber-600 ml-1">· relaxed: {d.relaxed.join(', ')}</span>}
+            </div>
+            <ul className="text-xs text-stone-700 space-y-0.5">
+              {d.plan.map(f => (
+                <li key={f.id} className="flex items-baseline gap-2">
+                  <span className="font-mono text-stone-400 w-5 text-right flex-shrink-0">{f.servings}×</span>
+                  <span className="flex-1 truncate">{f.name}</span>
+                  <span className="font-mono text-2xs text-stone-400">${f.totalCost.toFixed(2)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-stone-50 border border-stone-200 rounded-2xl p-4 mt-4 text-xs text-stone-600 leading-relaxed">
+        <span className="font-semibold">Why a rotation?</span> Eating the same protein every day means the same micronutrient gaps every day. The body draws on long-term stores (Fe, B12, Ca) over weeks, so what really matters is the <em>weekly</em> distribution. This view gives you 7 plans that, between them, cover the bases — at <span className="font-mono">${avg.cost}</span>/week in {city.name}.
+      </div>
+    </div>
+  );
+}
+
+function ProfileSlots({ saved, onLoad, onSave, onDelete }) {
+  const [name, setName] = useState('');
+  return (
+    <div className="mb-3 pb-3 border-b border-stone-100">
+      <div className="flex items-baseline justify-between mb-2">
+        <span className="text-2xs uppercase tracking-wider text-stone-400 font-medium">Saved Profiles</span>
+        <span className="text-2xs text-stone-300 font-mono">{saved.length}</span>
+      </div>
+      <div className="flex gap-1.5 flex-wrap mb-2">
+        {saved.length === 0 && (
+          <span className="text-xs text-stone-400 italic">No saved profiles yet — name and save the current one to switch quickly later.</span>
+        )}
+        {saved.map(p => (
+          <span key={p.id} className="inline-flex items-center gap-1 bg-stone-50 hover:bg-stone-100 rounded-lg pl-2 pr-1 py-1 text-xs border border-stone-200 transition">
+            <button onClick={() => onLoad(p.id)} className="font-medium text-stone-700">{p.name}</button>
+            <button
+              onClick={() => onDelete(p.id)}
+              className="text-stone-300 hover:text-red-500 text-xs px-1"
+              aria-label={`Delete ${p.name}`}
+              title="Delete profile"
+            >×</button>
+          </span>
+        ))}
+      </div>
+      <form
+        onSubmit={(e) => { e.preventDefault(); onSave(name); setName(''); }}
+        className="flex gap-1.5"
+      >
+        <input
+          type="text"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="Profile name (e.g. Krishna, Mom)"
+          className="flex-1 px-3 py-1 rounded-lg border border-stone-200 text-xs focus:outline-none focus:border-terra-400"
+        />
+        <button
+          type="submit"
+          disabled={!name.trim()}
+          className="px-3 py-1 rounded-lg text-xs font-semibold bg-terra-600 text-white hover:bg-terra-700 disabled:opacity-30 disabled:cursor-not-allowed transition"
+        >Save current</button>
+      </form>
     </div>
   );
 }

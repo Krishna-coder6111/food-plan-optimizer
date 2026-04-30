@@ -1,8 +1,9 @@
 name: Deploy to GitHub Pages
 
-# Build the static export and publish it on every push to main.
-# Requires GitHub Pages to be enabled with "Source = GitHub Actions" in
-# Settings → Pages.
+# Build the static export and publish it on every push to main. The
+# `enablement: true` flag on configure-pages auto-creates the Pages site
+# on first run, so the user does NOT need to flip the Settings → Pages
+# toggle manually.
 
 on:
   push:
@@ -17,6 +18,12 @@ permissions:
 concurrency:
   group: pages
   cancel-in-progress: true
+
+# Suppress the "Node 20 actions are deprecated" runner warning. The
+# upstream actions haven't published Node-24 builds yet; this opt-in
+# flag runs them on Node 24, which is a no-op for these JS-only actions.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
   build:
@@ -46,6 +53,12 @@ jobs:
         run: touch out/.nojekyll
 
       - uses: actions/configure-pages@v5
+        with:
+          # Auto-enable Pages on first deploy. Without this, the action
+          # 404s on a brand-new repo because the Pages site doesn't exist
+          # yet — exactly the failure mode we hit on the previous run.
+          enablement: true
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: out

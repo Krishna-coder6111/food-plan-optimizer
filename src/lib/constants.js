@@ -87,6 +87,56 @@ export const NUTRIENT_OPTIMA = {
 };
 
 /**
+ * Antioxidant capacity per food, expressed as a 0–10 score loosely
+ * indexed to USDA ORAC values (Oxygen Radical Absorbance Capacity).
+ *
+ * USDA pulled their official ORAC database in 2012 because in-vitro
+ * antioxidant numbers don't translate well to in-vivo benefit, but the
+ * relative ordering across food categories is still useful as a rough
+ * "phytonutrient density" signal — high-end berries / cocoa / dark
+ * greens really do pack more polyphenols than chicken or rice.
+ *
+ * We compute it on the fly from category + name keyword to avoid
+ * editing 80 food rows. Numbers are approximate, treat as ±2 points.
+ */
+const ANTIOX_BY_CAT = {
+  fruits:     7,   // most berries blow this away, see overrides
+  vegetables: 6,
+  nuts:       6,
+  legumes:    5,
+  grains:     2,
+  poultry:    1,
+  beef:       2,
+  fish:       2,
+  eggs:       2,
+  dairy:      1,
+  fats:       2,
+  supplement: 0,
+};
+
+// Name-keyword overrides for foods that punch above (or below) their category.
+const ANTIOX_OVERRIDES = [
+  [/berr|blueberr|blackberr|raspberr|cranberr/i, 10],
+  [/kale|spinach|chard|collard/i,                 9],
+  [/broccoli|brussels|cauliflower|cabbage/i,      8],
+  [/walnut|pecan|chestnut/i,                      8],
+  [/dark chocolate|cocoa/i,                       10],
+  [/turmeric|cinnamon|clove|oregano/i,            10],
+  [/liver/i,                                       7],   // organ meats are surprisingly high
+  [/extra virgin olive oil/i,                      6],
+  [/wild salmon|sardine|mackerel/i,                4],   // some astaxanthin
+  [/orange|lemon|grapefruit/i,                     7],
+  [/apple|grape/i,                                 6],
+];
+
+export function antioxScore(food) {
+  for (const [pat, score] of ANTIOX_OVERRIDES) {
+    if (pat.test(food.name)) return score;
+  }
+  return ANTIOX_BY_CAT[food.cat] ?? 3;
+}
+
+/**
  * STORAGE_NOTES — copy strings the UI uses to explain the storage horizon.
  */
 export const STORAGE_NOTES = {

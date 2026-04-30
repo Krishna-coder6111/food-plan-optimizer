@@ -3,12 +3,12 @@
 import { useState, useMemo, useCallback, useEffect, Fragment } from 'react';
 import { FOODS, CATEGORIES, REGIONS } from '../data/foods';
 import { CITIES, CITY_MAP } from '../data/cities';
-import { MACRO_PRESETS, ACTIVITY_LEVELS, MAX_SERVINGS, STORE_TIERS } from '../lib/constants';
+import { MACRO_PRESETS, ACTIVITY_LEVELS, MAX_SERVINGS, STORE_TIERS, antioxScore } from '../lib/constants';
 import { calcTDEE, calcTargets } from '../lib/tdee';
 import { useOptimizer } from '../lib/useOptimizer';
 import { usePersistentState, setSerialize, setDeserialize, mapSerialize, mapDeserialize } from '../lib/usePersistentState';
 import { loadProfiles, saveProfiles, captureSnapshot, makeProfileId, PROFILE_FIELDS } from '../lib/profiles';
-import { buildWeek, weeklyAverages } from '../lib/weeklyPlan';
+import { buildShoppingList } from '../lib/weeklyPlan';
 
 import UsMap from '../components/UsMap';
 import MealPlanTable from '../components/MealPlanTable';
@@ -162,7 +162,7 @@ export default function Home() {
 
   const tabs = [
     { id: 'plan',     label: 'Meal Plan' },
-    { id: 'weekly',   label: 'Weekly' },
+    { id: 'weekly',   label: 'Shopping List' },
     { id: 'micro',    label: 'Micronutrients' },
     { id: 'map',      label: 'City Map' },
     { id: 'hormones', label: gender === 'male' ? 'T Support' : 'Hormones' },
@@ -413,15 +413,7 @@ export default function Home() {
 
       {/* ═══════ WEEKLY TAB ═══════ */}
       {tab === 'weekly' && (
-        <WeeklyView
-          foods={availableFoods}
-          targets={targets}
-          region={city.region}
-          costIndex={effectiveCostIndex}
-          gender={gender}
-          locks={locks}
-          city={city}
-        />
+        <ShoppingListView plan={result.plan} city={city} storeTier={storeTier} />
       )}
 
       {/* ═══════ MICRONUTRIENT TAB ═══════ */}
@@ -636,61 +628,63 @@ function HormoneRow({ goal, plan, totals, contributorsByNutrient }) {
   );
 }
 
-function WeeklyView({ foods, targets, region, costIndex, gender, locks, city }) {
-  // Compute the 7-day rotation. Re-runs whenever the input signature
-  // changes (food set / targets / region / tier / locks). 7 LPs at ~10ms
-  // each = ~70ms total; fine to compute synchronously inside useMemo.
-  const week = useMemo(
-    () => buildWeek(foods, targets, region, costIndex, gender, { locks }),
-    // We only depend on the same primitive signature the daily hook does.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [foods.map(f => f.id).join(','), targets.calories, targets.protein, targets.carbs, targets.fat, targets.fiber, region, costIndex, gender, [...locks].sort().join(',')],
-  );
-  const avg = useMemo(() => weeklyAverages(week), [week]);
+function ShoppingListView({ plan, city, storeTier }) {
+  const [days, setDays] = useState(7);
+  const list = useMemo(() => buildShoppingList(plan, days), [plan, days]);
 
   return (
     <div>
       <div className="bg-white rounded-2xl border border-stone-200 p-4 mb-4 shadow-sm">
         <div className="flex items-baseline justify-between mb-1 flex-wrap gap-2">
-          <h2 className="font-display text-lg font-bold">7-Day Plan</h2>
-          <span className="text-2xs text-stone-400 font-mono">
-            ${avg.cost} / week · ${avg.avgCost} avg / day · {avg.avgProtein}g P · {avg.avgCalories} kcal
-          </span>
+          <h2 className="font-display text-lg font-bold">Shopping List</h2>
+          <div className="flex items-center gap-3 text-2xs font-mono">
+            <label className="flex items-center gap-1.5 text-stone-400">
+              <span>Days</span>
+              <input
+                type="number" min={1} max={30}
+                value={days}
+                onChange={e => setDays(Math.max(1, Math.min(30, +e.target.value || 1)))}
+                className="w-12 px-1.5 py-0.5 rounded border border-stone-200 text-center font-mono"
+              />
+            </label>
+            <span className="text-terra-600 font-bold">${list.totalWeekly}</span>
+            <span className="text-stone-400">total · ${list.totalDaily}/day</span>
+          </div>
         </div>
-        <p className="text-xs text-stone-400 mb-3">
-          Each day rotates a different protein category to give you actual variety. Solving 7 LPs in parallel; numbers are this day&apos;s plan, not the week sum.
+        <p className="text-xs text-stone-400 mb-1">
+          Same daily plan × {days} days, grouped by store section. The optimizer already picked the cheapest combo that hits your targets — eating the same thing every day is what minimizes cost.
+        </p>
+        <p className="text-2xs text-stone-400">
+          Prices reflect <span className="font-mono">{city.name}</span> at <span className="font-mono">{storeTier.name}</span> ({storeTier.mult < 1 ? '−' : '+'}{Math.abs(Math.round((storeTier.mult - 1) * 100))}% vs national avg).
         </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {week.map((d, i) => (
-          <div key={i} className="bg-white rounded-2xl border border-stone-200 p-3 shadow-sm">
-            <div className="flex items-baseline justify-between mb-1">
-              <h3 className="font-display text-base font-bold">
-                <span className="text-2xs uppercase tracking-wider text-stone-400 mr-1.5">{d.day}</span>
-                <span>{d.icon} {d.label}</span>
-              </h3>
-              <span className="text-xs font-mono text-terra-600 font-bold">${d.totals.cost}</span>
-            </div>
-            <div className="text-2xs font-mono text-stone-400 mb-2">
-              {d.totals.protein}g P · {d.totals.calories} kcal · {d.totals.fiber}g fib
-              {d.relaxed.length > 0 && <span className="text-amber-600 ml-1">· relaxed: {d.relaxed.join(', ')}</span>}
-            </div>
-            <ul className="text-xs text-stone-700 space-y-0.5">
-              {d.plan.map(f => (
-                <li key={f.id} className="flex items-baseline gap-2">
-                  <span className="font-mono text-stone-400 w-5 text-right flex-shrink-0">{f.servings}×</span>
-                  <span className="flex-1 truncate">{f.name}</span>
-                  <span className="font-mono text-2xs text-stone-400">${f.totalCost.toFixed(2)}</span>
-                </li>
-              ))}
-            </ul>
+      {list.sections.map(({ cat, items }) => (
+        <div key={cat} className="bg-white rounded-2xl border border-stone-200 p-3 mb-3 shadow-sm">
+          <div className="flex items-baseline gap-2 mb-2">
+            <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: CATEGORIES[cat]?.color }} />
+            <h3 className="font-display text-sm font-bold uppercase tracking-wider text-stone-700">{CATEGORIES[cat]?.label || cat}</h3>
+            <span className="text-2xs text-stone-300 font-mono ml-auto">
+              ${items.reduce((s, x) => s + x.weeklyCost, 0).toFixed(2)}
+            </span>
           </div>
-        ))}
-      </div>
+          <table className="w-full text-xs">
+            <tbody>
+              {items.map(it => (
+                <tr key={it.id} className="border-b border-stone-50 last:border-0">
+                  <td className="py-1 text-stone-700 font-medium">{it.name}</td>
+                  <td className="py-1 text-stone-400 text-2xs">{it.unit}</td>
+                  <td className="py-1 font-mono text-stone-500 text-right">{it.weeklyServings}× <span className="text-stone-300">/ {days}d</span></td>
+                  <td className="py-1 font-mono font-semibold text-terra-600 text-right w-16">${it.weeklyCost.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
 
-      <div className="bg-stone-50 border border-stone-200 rounded-2xl p-4 mt-4 text-xs text-stone-600 leading-relaxed">
-        <span className="font-semibold">Why a rotation?</span> Eating the same protein every day means the same micronutrient gaps every day. The body draws on long-term stores (Fe, B12, Ca) over weeks, so what really matters is the <em>weekly</em> distribution. This view gives you 7 plans that, between them, cover the bases — at <span className="font-mono">${avg.cost}</span>/week in {city.name}.
+      <div className="bg-stone-50 border border-stone-200 rounded-2xl p-4 text-xs text-stone-600 leading-relaxed">
+        <span className="font-semibold">Why no protein rotation?</span> The LP already minimizes cost subject to your targets. Forcing variety strictly increases the bill — exactly what you don&apos;t want when shopping cheap. Eat the same chicken thighs every day if that&apos;s what wins; your body has weeks of B12/Fe/Ca stores to bridge any micronutrient bumpiness.
       </div>
     </div>
   );
@@ -751,7 +745,7 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
     const enriched = FOODS.map(f => {
       const price = (f.price[city.region] ?? f.price.us) * costMult;
       const pd = +(f.p / Math.max(0.01, price)).toFixed(1);
-      return { ...f, _price: +price.toFixed(2), _pd: pd };
+      return { ...f, _price: +price.toFixed(2), _pd: pd, _antiox: antioxScore(f) };
     });
     return enriched.filter(f => {
       if (catFilter !== 'all' && f.cat !== catFilter) return false;
@@ -761,14 +755,15 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
   }, [city.region, effectiveCostIndex, filter, catFilter]);
 
   const getters = {
-    name: f => f.name.toLowerCase(),
-    cat:  f => f.cat,
-    p:    f => f.p,
-    cal:  f => f.cal,
-    price:f => f._price,
-    pd:   f => f._pd,
-    fib:  f => f.fib,
-    micro:f => f.micro,
+    name:  f => f.name.toLowerCase(),
+    cat:   f => f.cat,
+    p:     f => f.p,
+    cal:   f => f.cal,
+    price: f => f._price,
+    pd:    f => f._pd,
+    fib:   f => f.fib,
+    micro: f => f.micro,
+    antiox:f => f._antiox,
   };
   const sorted = applySort(rows, sort, getters);
 
@@ -819,8 +814,9 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
             <SortHeader id="cal"   sort={sort} setSort={setSort}>Cal</SortHeader>
             <SortHeader id="price" sort={sort} setSort={setSort}>Cost ({city.region.toUpperCase()})</SortHeader>
             <SortHeader id="pd"    sort={sort} setSort={setSort}>P/$</SortHeader>
-            <SortHeader id="fib"   sort={sort} setSort={setSort}>Fiber</SortHeader>
-            <SortHeader id="micro" sort={sort} setSort={setSort}>Micro</SortHeader>
+            <SortHeader id="fib"    sort={sort} setSort={setSort}>Fiber</SortHeader>
+            <SortHeader id="micro"  sort={sort} setSort={setSort}>Micro</SortHeader>
+            <SortHeader id="antiox" sort={sort} setSort={setSort}>Antiox</SortHeader>
             <th className="py-2 px-1" />
           </tr>
         </thead>
@@ -840,6 +836,9 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
                 <td className="py-1.5 px-1 font-mono font-bold" style={{ color: f._pd > 30 ? '#3D6340' : f._pd > 18 ? '#B24F1C' : '#918779' }}>{f._pd}</td>
                 <td className="py-1.5 px-1 text-stone-400">{f.fib}g</td>
                 <td className="py-1.5 px-1"><MicroBarWithTip food={f} /></td>
+                <td className="py-1.5 px-1 font-mono font-semibold" title="Antioxidant capacity (loosely indexed to ORAC, 0–10)" style={{ color: f._antiox >= 8 ? '#3D6340' : f._antiox >= 5 ? '#B24F1C' : '#918779' }}>
+                  {f._antiox}
+                </td>
                 <td className="py-1.5 px-1">
                   <button onClick={() => toggleExclude(f.id)} className={`text-xs ${isExcl ? 'text-sage-600' : 'text-red-400 hover:text-red-600'}`}>
                     {isExcl ? '+' : '✕'}

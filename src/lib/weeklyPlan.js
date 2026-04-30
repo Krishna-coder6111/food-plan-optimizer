@@ -1,67 +1,54 @@
-import { optimizeDiet } from './optimizer';
-
 /**
- * Weekly plan — runs the day-LP 7 times with a rotating "protein anchor"
- * so you don't eat lentils 7 days straight.
+ * Weekly view — produces a 7-day shopping list from a single daily plan.
  *
- * Approach (intentionally simple — variety over optimality):
- *   - One day per element of ROTATION.
- *   - For each day, the food set is restricted to the day's allowed
- *     protein categories + all non-protein categories.
- *   - The day's LP runs with the same targets/locks/pins as the daily view.
+ * The previous version rotated protein categories (Mon poultry, Tue fish,
+ * etc) to force variety. We dropped it: the LP is already minimizing
+ * cost, so forcing variety strictly increases the weekly bill — exactly
+ * what someone trying to save money does NOT want. If you found chicken
+ * thighs at $0.65/4oz to be the cheapest hit-targets food, you eat
+ * chicken thighs every day. Boring but cheap is the point.
  *
- * Why not a single 7-day MIP? javascript-lp-solver can barely handle the
- * single-day LP with slack equality constraints; 7-day cross-coupling
- * would explode. The rotation gives "good enough" variety in O(7×LP) time.
+ * What this gives you instead:
+ *   - The daily plan multiplied by 7
+ *   - Items grouped by category (so the shopping list maps onto store
+ *     aisles)
+ *   - Weekly total cost, weekly servings per item
+ *   - A cost-per-day breakdown
  */
 
-const PROTEIN_CATS = ['poultry', 'beef', 'fish', 'eggs', 'dairy', 'legumes'];
-
-export const ROTATION = [
-  { day: 'Mon', allowed: ['poultry'],            label: 'Poultry',          icon: '🍗' },
-  { day: 'Tue', allowed: ['fish'],               label: 'Fish (omega-3)',   icon: '🐟' },
-  { day: 'Wed', allowed: ['legumes'],            label: 'Plant-protein',    icon: '🌱' },
-  { day: 'Thu', allowed: ['beef'],               label: 'Red meat',         icon: '🥩' },
-  { day: 'Fri', allowed: ['fish', 'eggs'],       label: 'Fish + eggs',      icon: '🐟' },
-  { day: 'Sat', allowed: ['dairy', 'eggs'],      label: 'Dairy / eggs',     icon: '🥚' },
-  { day: 'Sun', allowed: ['poultry', 'legumes'], label: 'Mixed',            icon: '🍱' },
+const CATEGORY_ORDER = [
+  'poultry', 'beef', 'fish', 'eggs', 'dairy',
+  'legumes', 'grains', 'vegetables', 'fruits',
+  'nuts', 'fats', 'supplement',
 ];
 
-export function buildWeek(foods, targets, region, costIndex, gender, opts = {}) {
-  return ROTATION.map(r => {
-    const dayFoods = foods.filter(f => {
-      // Always allow non-protein categories.
-      if (!PROTEIN_CATS.includes(f.cat)) return true;
-      // Allow protein iff its category is in today's whitelist.
-      return r.allowed.includes(f.cat);
+export function buildShoppingList(dailyPlan, days = 7) {
+  // Group plan items by category, scaling servings × days.
+  const byCategory = new Map();
+  for (const f of dailyPlan) {
+    if (!byCategory.has(f.cat)) byCategory.set(f.cat, []);
+    byCategory.get(f.cat).push({
+      id: f.id,
+      name: f.name,
+      unit: f.unit,
+      cat: f.cat,
+      dailyServings: f.servings,
+      weeklyServings: f.servings * days,
+      dailyCost: f.totalCost,
+      weeklyCost: +(f.totalCost * days).toFixed(2),
     });
-    // Locks/pins on excluded categories silently drop — that's fine, they
-    // came from the daily view's user overrides which only meant "today".
-    const safePins = new Set([...(opts.pins || [])].filter(id => dayFoods.some(f => f.id === id)));
-    const safeLocks = new Map([...(opts.locks || [])].filter(([id]) => dayFoods.some(f => f.id === id)));
+  }
+  // Stable category order (poultry/beef/.../supplement), with unknowns last.
+  const sections = [];
+  for (const cat of CATEGORY_ORDER) {
+    if (byCategory.has(cat)) sections.push({ cat, items: byCategory.get(cat) });
+  }
+  for (const [cat, items] of byCategory) {
+    if (!CATEGORY_ORDER.includes(cat)) sections.push({ cat, items });
+  }
 
-    const result = optimizeDiet(dayFoods, targets, region, costIndex, gender, {
-      pins: safePins,
-      locks: safeLocks,
-    });
-    return { ...r, ...result };
-  });
-}
+  const totalDaily  = +dailyPlan.reduce((s, f) => s + f.totalCost, 0).toFixed(2);
+  const totalWeekly = +(totalDaily * days).toFixed(2);
 
-/**
- * Aggregate week-level totals (avg-per-day) for a "weekly average" view.
- * Cost is summed across the week; macros are averaged.
- */
-export function weeklyAverages(week) {
-  const days = week.length;
-  const sum = (k) => week.reduce((s, d) => s + (d.totals[k] || 0), 0);
-  return {
-    cost: +sum('cost').toFixed(2),
-    avgCost: +(sum('cost') / days).toFixed(2),
-    avgProtein:  Math.round(sum('protein') / days),
-    avgCalories: Math.round(sum('calories') / days),
-    avgCarbs:    Math.round(sum('carbs') / days),
-    avgFat:      Math.round(sum('fat') / days),
-    avgFiber:    Math.round(sum('fiber') / days),
-  };
+  return { sections, totalDaily, totalWeekly, days };
 }

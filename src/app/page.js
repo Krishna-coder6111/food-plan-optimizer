@@ -9,7 +9,7 @@ import { useOptimizer } from '../lib/useOptimizer';
 import { usePersistentState, setSerialize, setDeserialize, mapSerialize, mapDeserialize } from '../lib/usePersistentState';
 import { loadProfiles, saveProfiles, captureSnapshot, makeProfileId, PROFILE_FIELDS } from '../lib/profiles';
 import { buildShoppingList } from '../lib/weeklyPlan';
-import { fetchLivePricesBatch, isUsingProxy } from '../lib/livePrices';
+import { fetchLivePricesBatch, isUsingProxy, fetchKrogerLocations, comparePriceAcrossStores } from '../lib/livePrices';
 
 import UsMap from '../components/UsMap';
 import MealPlanTable from '../components/MealPlanTable';
@@ -151,13 +151,13 @@ export default function Home() {
   const [locks, setLocks]       = usePersistentState('ne.locks', new Map(), {
     serialize: mapSerialize, deserialize: mapDeserialize,
   });
-  // Cap pins to ≤1 at deserialize time (synchronous). javascript-lp-solver
-  // hits a simplex degeneracy on certain 2+ pin combinations and freezes
-  // mid-Solve, before any useEffect-based trim can intervene. Trimming in
-  // the deserializer means the bad state never even reaches the optimizer.
+  // Cap pins to ≤4 at deserialize time. Worker-isolated solver with a
+  // 2.5s deadline tolerates multi-pin now, but bad localStorage from
+  // older builds with 6+ pins would still chew the Worker's budget on
+  // every load. Synchronous trim during JSON.parse keeps it sane.
   const [pins, setPins]         = usePersistentState('ne.pins', new Set(), {
     serialize: setSerialize,
-    deserialize: (raw) => new Set(JSON.parse(raw).slice(0, 1)),
+    deserialize: (raw) => new Set(JSON.parse(raw).slice(0, 4)),
   });
   // Target overrides — user can type custom values that take precedence
   // over the calculated TDEE-driven targets. `null` for a field means "use
@@ -176,18 +176,9 @@ export default function Home() {
   const [savedProfiles, setSavedProfiles] = useState([]);
   useEffect(() => { setSavedProfiles(loadProfiles()); }, []);
 
-  // SELF-HEAL stuck state from older app versions:
-  // Older builds let the user pin multiple foods, which combined with the
-  // javascript-lp-solver's simplex degeneracy could freeze the page on
-  // first solve. Watch `pins` and trim down to ≤1 — fires on initial
-  // mount AND on every hydration (`usePersistentState` reads localStorage
-  // post-mount and re-emits, which is the case that was getting stuck for
-  // returning users).
-  useEffect(() => {
-    if (pins.size > 1) {
-      setPins(new Set([...pins].slice(0, 1)));
-    }
-  }, [pins, setPins]);
+  // (The previous client-side self-heal effect for multi-pin state has
+  // been removed — the deserializer now trims to 4 synchronously, and
+  // the Worker-isolated solver is robust to hard pin combinations.)
 
   // Nuclear option: clear every localStorage key the app owns and reload.
   // Bound to the "Reset my data" button below. Useful when stuck state
@@ -350,21 +341,17 @@ export default function Home() {
   const togglePin = useCallback((id) => {
     setPins(prev => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-        return next;
+      if (next.has(id)) next.delete(id);
+      else              next.add(id);
+      // Soft cap at 4 pins. The Worker has a hard deadline (2.5s) so
+      // even if the LP gets hard, we recover gracefully — but no point
+      // letting the user pin every food.
+      if (next.size > 4) {
+        const list = [...next];
+        return new Set(list.slice(-4));
       }
-      // CAP at 1 active pin. javascript-lp-solver's simplex degenerates
-      // on certain 2+ pin combinations (cycles internally with no way for
-      // us to interrupt — the deadline guard only checks between solver
-      // calls). Until we move the solver into a terminable Web Worker,
-      // hard-cap to 1 to keep the UI responsive. Pinning a 2nd food
-      // replaces the first.
-      next.clear();
-      next.add(id);
       return next;
     });
-    // Pinning a food un-excludes it (otherwise the LP can't include it).
     setExcluded(prev => {
       if (!prev.has(id)) return prev;
       const next = new Set(prev);
@@ -1135,6 +1122,204 @@ function ShoppingListView({ plan, city, storeTier }) {
         </div>
       ))}
 
+      <ComparePricesPanel plan={plan} days={days} />
+    </div>
+  );
+}
+
+// ─── Compare prices across stores (Kroger live API) ─────────────────────────
+
+function ComparePricesPanel({ plan, days }) {
+  const [zip, setZip] = useState('');
+  const [stores, setStores] = useState([]);          // available locations
+  const [picked, setPicked] = useState([]);          // chosen locationIds
+  const [loadingStores, setLoadingStores] = useState(false);
+  const [rows, setRows] = useState([]);              // [{ food, byLoc: Map<id, item> }, ...]
+  const [loadingPrices, setLoadingPrices] = useState(false);
+  const [error, setError] = useState(null);
+
+  const onLookup = useCallback(async () => {
+    if (!zip.match(/^\d{5}$/)) { setError('Enter a 5-digit ZIP'); return; }
+    setError(null);
+    setLoadingStores(true);
+    setRows([]); setPicked([]);
+    try {
+      const list = await fetchKrogerLocations(zip);
+      setStores(list);
+      // Auto-select up to 3 nearest stores so the user has something
+      // to compare immediately.
+      setPicked(list.slice(0, Math.min(3, list.length)).map(s => s.locationId));
+      if (list.length === 0) {
+        setError('No Kroger-family stores near this ZIP. (Kroger covers about 2,800 stores in 35 US states. Try a different ZIP if your area isn\'t served.)');
+      }
+    } catch (e) {
+      setError(`Couldn't reach the proxy: ${e.message}`);
+    } finally {
+      setLoadingStores(false);
+    }
+  }, [zip]);
+
+  const onCompare = useCallback(async () => {
+    if (picked.length === 0) return;
+    setLoadingPrices(true);
+    setError(null);
+    try {
+      const out = [];
+      // Sequential, not parallel: Kroger rate-limits hard. ~100ms per
+      // food × 4 stores → ~30s for 8 plan items. Cache hits are instant.
+      for (const f of plan) {
+        const cmp = await comparePriceAcrossStores(f.name, picked);
+        out.push({ food: f, byLoc: cmp.byLocation });
+      }
+      setRows(out);
+    } catch (e) {
+      setError(`Lookup failed: ${e.message}`);
+    } finally {
+      setLoadingPrices(false);
+    }
+  }, [plan, picked]);
+
+  const togglePick = (id) => {
+    setPicked(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id].slice(-4));
+  };
+
+  // Sum the cheapest available across each row, per store
+  const storeTotals = picked.map(id => {
+    let sum = 0, found = 0;
+    for (const r of rows) {
+      const it = r.byLoc.get(id);
+      if (it && it.price > 0) { sum += it.price * r.food.servings * days; found++; }
+    }
+    return { id, weekly: sum, hits: found };
+  });
+  const cheapestId = storeTotals.length ? [...storeTotals].sort((a, b) => a.weekly - b.weekly)[0]?.id : null;
+
+  return (
+    <div className="bg-white rounded-2xl border border-stone-200 p-4 mt-4 shadow-sm">
+      <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
+        <h3 className="font-display text-base font-bold">Compare prices across stores</h3>
+        <span className="text-2xs text-stone-400 font-mono">live · Kroger Catalog API</span>
+      </div>
+      <p className="text-xs text-stone-400 mb-3">
+        Look up your shopping list at multiple Kroger-family stores in your ZIP — Fred Meyer, Ralphs, Smith&apos;s, Harris Teeter, King Soopers, etc. We use the cheapest matching product per store. Limit 4 stores.
+      </p>
+
+      <div className="flex gap-2 flex-wrap items-center mb-3">
+        <input
+          type="text"
+          inputMode="numeric"
+          maxLength={5}
+          value={zip}
+          onChange={e => setZip(e.target.value.replace(/\D/g, ''))}
+          onKeyDown={e => e.key === 'Enter' && onLookup()}
+          placeholder="ZIP (e.g. 02115)"
+          className="px-3 py-1.5 rounded-lg border border-stone-200 text-sm font-mono focus:outline-none focus:border-terra-400 w-32"
+        />
+        <button
+          onClick={onLookup}
+          disabled={loadingStores || zip.length !== 5}
+          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-terra-600 text-white hover:bg-terra-700 disabled:opacity-30 disabled:cursor-not-allowed transition"
+        >{loadingStores ? 'Finding stores…' : 'Find stores'}</button>
+        {stores.length > 0 && (
+          <button
+            onClick={onCompare}
+            disabled={loadingPrices || picked.length === 0}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-sage-600 text-white hover:bg-sage-700 disabled:opacity-30 disabled:cursor-not-allowed transition"
+          >{loadingPrices ? `Pricing… (${rows.length}/${plan.length})` : `Compare ${picked.length} store${picked.length === 1 ? '' : 's'}`}</button>
+        )}
+      </div>
+
+      {error && (
+        <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">{error}</div>
+      )}
+
+      {stores.length > 0 && (
+        <div className="mb-3">
+          <div className="text-2xs uppercase tracking-wider text-stone-400 font-semibold mb-1.5">Stores near {zip}</div>
+          <div className="flex gap-1.5 flex-wrap">
+            {stores.map(s => {
+              const sel = picked.includes(s.locationId);
+              return (
+                <button
+                  key={s.locationId}
+                  onClick={() => togglePick(s.locationId)}
+                  className={`text-xs px-2 py-1 rounded-lg border transition ${sel ? 'border-sage-500 bg-sage-50 text-sage-700' : 'border-stone-200 text-stone-500 hover:border-stone-400'}`}
+                  title={`${s.name}${s.address ? ` — ${s.address.addressLine1}, ${s.address.city}, ${s.address.state} ${s.address.zipCode}` : ''}`}
+                >
+                  {sel && '✓ '}{s.name}
+                  <span className="text-2xs text-stone-400 ml-1">{s.address?.city}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b-2 border-stone-200">
+                <th className="py-2 px-1 text-left text-2xs uppercase tracking-wider text-stone-400 font-medium">Item</th>
+                {picked.map(id => {
+                  const s = stores.find(x => x.locationId === id);
+                  const win = id === cheapestId;
+                  return (
+                    <th key={id} className={`py-2 px-1 text-right text-2xs uppercase tracking-wider font-medium whitespace-nowrap ${win ? 'text-sage-700' : 'text-stone-400'}`}>
+                      {s?.name?.split(' ')[0] || 'Store'}
+                      {win && <span className="block text-[9px] font-normal normal-case">cheapest cart</span>}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => {
+                // Find cheapest non-null price across stores for this row
+                const prices = picked.map(id => r.byLoc.get(id)?.price ?? null);
+                const validPrices = prices.filter(p => p != null && p > 0);
+                const minPrice = validPrices.length ? Math.min(...validPrices) : null;
+                return (
+                  <tr key={r.food.id} className="border-b border-stone-50">
+                    <td className="py-1.5 px-1 text-stone-700">
+                      <span className="font-medium">{r.food.name}</span>
+                      <span className="text-2xs text-stone-400 ml-1">×{r.food.servings * days}</span>
+                    </td>
+                    {picked.map(id => {
+                      const it = r.byLoc.get(id);
+                      const isMin = it && it.price === minPrice;
+                      return (
+                        <td key={id} className={`py-1.5 px-1 text-right font-mono text-2xs whitespace-nowrap ${isMin ? 'text-sage-700 font-bold' : 'text-stone-500'}`}>
+                          {it ? (
+                            <>
+                              ${it.price.toFixed(2)}
+                              <span className="block text-[9px] text-stone-400 font-normal truncate max-w-[80px] ml-auto">{it.size || it.brand || ''}</span>
+                            </>
+                          ) : (
+                            <span className="text-stone-300">—</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+              <tr className="border-t-2 border-stone-300 font-bold">
+                <td className="py-2 px-1 text-stone-700 uppercase text-2xs tracking-wider">Cart total ({days}d)</td>
+                {storeTotals.map(t => (
+                  <td key={t.id} className={`py-2 px-1 text-right font-mono ${t.id === cheapestId ? 'text-sage-700' : 'text-stone-500'}`}>
+                    ${t.weekly.toFixed(2)}
+                    <span className="block text-2xs font-normal text-stone-300">{t.hits}/{rows.length} matched</span>
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+          <p className="text-2xs text-stone-400 mt-2">
+            Prices fetched live from Kroger Catalog API. Sizes vary by store — we use the cheapest matching product per store. Items with no match show as &quot;—&quot;.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

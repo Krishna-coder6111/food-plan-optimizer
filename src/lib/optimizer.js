@@ -70,11 +70,23 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
   const costMult = costIndex / 100;
   const regionKey = region || 'us';
 
-  // Mode tuning. 'cost' = baseline penalties (solver finds cheapest plan
-  // that hits floors). 'nutrients' = 5× the deficit penalty so the solver
-  // pays more food cost to push each micronutrient toward its optimum.
-  // Both modes still enforce the same hard floors / ceilings.
-  const modeMult = mode === 'nutrients' ? 5 : 1;
+  // Mode tuning.
+  //   'cost'      — soft-target opt with small slack penalty. Cheapest plan
+  //                 that meets the DRI floors. Default.
+  //   'nutrients' — RAISE the hard floors from `min` to `opt` for every
+  //                 micronutrient. The LP must hit at least the optimum
+  //                 for each, no soft targeting. Plus 3× slack penalty so
+  //                 the solver still tries to push past opt where cheap.
+  //                 If a floor at opt is infeasible, the relaxation
+  //                 cascade drops it back to min for that nutrient
+  //                 (better than nothing).
+  //
+  // Earlier version of this just multiplied slack penalties by 5×, which
+  // counterintuitively made the solver pick *worse* plans (it tried to
+  // hit opt softly, but with so much excess penalty it landed BELOW opt
+  // on more nutrients). Hard-targeting opt is the right semantics.
+  const isNutrientsMode = mode === 'nutrients';
+  const modeMult = isNutrientsMode ? 3 : 1;
 
   const buildModel = (floorOverrides = {}) => {
     const model = {
@@ -113,7 +125,11 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
     // penalty). Hitting opt exactly is free.
     //
     for (const [nutrient, range] of Object.entries(NUTRIENT_OPTIMA)) {
-      const floor = floorOverrides[nutrient] ?? range.min;
+      // In nutrients mode, the floor is `opt` (must hit the optimum).
+      // The relaxation cascade can still drop it via floorOverrides if
+      // infeasible.
+      const baseFloor = isNutrientsMode ? range.opt : range.min;
+      const floor = floorOverrides[nutrient] ?? baseFloor;
       model.constraints[`n_${nutrient}_min`] = { min: floor };
       if (range.max > 0) {
         model.constraints[`n_${nutrient}_max`] = { max: range.max };

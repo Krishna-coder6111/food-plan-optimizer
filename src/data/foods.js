@@ -40,6 +40,8 @@ export const CATEGORIES = {
   fruits:     { label: 'Fruits',          color: '#97B897' },
   nuts:       { label: 'Nuts & Seeds',    color: '#8A3C15' },
   fats:       { label: 'Fats & Oils',     color: '#B8AFA0' },
+  spices:     { label: 'Spices & Tea',    color: '#A05A2C' },
+  fermented:  { label: 'Fermented',       color: '#7A8C5C' },
   supplement: { label: 'Supplements',     color: '#6B6358' },
 };
 
@@ -143,6 +145,22 @@ const FOODS_BASE = [
   // ─── SUPPLEMENTS ──────────────────────────────────────────────────────
   { id:120,name:'Whey Protein',         unit:'1 scoop',    cat:'supplement',p:24, cal:120, f:1,    sf:0.5, mf:0,   chol:30,  carb:3,   fib:0, sug:1, na:50,  k:160, ca:10,fe:0,  vitA:0,  vitC:0,  vitD:0,  vitE:0,  vitK:0,  vitB6:0, vitB12:0,  folate:0,  zn:3,   mg_:2,  se:5,  omega3:0,    micro:1, price:{us:0.65,ne:0.70,mw:0.62,so:0.58,we:0.68}, hormoneM:['leucine'],              hormoneF:[] },
   { id:121,name:'Casein Protein',       unit:'1 scoop',    cat:'supplement',p:24, cal:120, f:1,    sf:0.5, mf:0,   chol:20,  carb:3,   fib:0, sug:1, na:80,  k:100, ca:40,fe:0,  vitA:0,  vitC:0,  vitD:0,  vitE:0,  vitK:0,  vitB6:0, vitB12:0,  folate:0,  zn:3,   mg_:2,  se:5,  omega3:0,    micro:1, price:{us:0.75,ne:0.82,mw:0.72,so:0.68,we:0.78}, hormoneM:['ca'],                   hormoneF:['ca'] },
+
+  // ─── SPICES & TEA (Pahwa & Goyal 2024 anti-inflam phytochemicals) ─────
+  // Tiny per-serving values — these foods exist primarily so the
+  // anti-inflammatory score has real targets to score against and the
+  // optimizer can pin them. Caps are 1–2 servings/day in MAX_SERVINGS.
+  { id:130,name:'Turmeric (1 tsp)',     unit:'1 tsp (3g)',  cat:'spices',    p:0,  cal:9,   f:0.3,  sf:0.1, mf:0,   chol:0,   carb:2,   fib:1, sug:0, na:1,   k:51,  ca:0, fe:5,  vitA:0,  vitC:1,  vitD:0,  vitE:1,  vitK:1,  vitB6:5, vitB12:0,  folate:1,  zn:1,   mg_:1,  se:0,  omega3:0,    micro:7, price:{us:0.10,ne:0.12,mw:0.09,so:0.08,we:0.11}, hormoneM:[],                       hormoneF:[] },
+  { id:131,name:'Ginger (fresh, 1 tbsp)',unit:'1 tbsp (6g)', cat:'spices',    p:0,  cal:5,   f:0,    sf:0,   mf:0,   chol:0,   carb:1,   fib:0, sug:0, na:1,   k:25,  ca:0, fe:1,  vitA:0,  vitC:0,  vitD:0,  vitE:0,  vitK:0,  vitB6:1, vitB12:0,  folate:0,  zn:0,   mg_:1,  se:0,  omega3:0,    micro:5, price:{us:0.15,ne:0.17,mw:0.14,so:0.13,we:0.16}, hormoneM:[],                       hormoneF:[] },
+  { id:132,name:'Garlic (1 clove)',     unit:'1 clove (3g)', cat:'spices',    p:0,  cal:4,   f:0,    sf:0,   mf:0,   chol:0,   carb:1,   fib:0, sug:0, na:0,   k:12,  ca:0, fe:0,  vitA:0,  vitC:1,  vitD:0,  vitE:0,  vitK:0,  vitB6:2, vitB12:0,  folate:0,  zn:0,   mg_:0,  se:0,  omega3:0,    micro:5, price:{us:0.05,ne:0.06,mw:0.05,so:0.04,we:0.05}, hormoneM:[],                       hormoneF:[] },
+  { id:133,name:'Cinnamon (1 tsp)',     unit:'1 tsp (3g)',  cat:'spices',    p:0,  cal:6,   f:0,    sf:0,   mf:0,   chol:0,   carb:2,   fib:1, sug:0, na:0,   k:11,  ca:3, fe:1,  vitA:0,  vitC:0,  vitD:0,  vitE:0,  vitK:1,  vitB6:0, vitB12:0,  folate:0,  zn:0,   mg_:1,  se:0,  omega3:0,    micro:5, price:{us:0.08,ne:0.10,mw:0.07,so:0.06,we:0.09}, hormoneM:[],                       hormoneF:[] },
+  { id:134,name:'Green Tea (1 cup)',    unit:'1 cup (245ml)',cat:'spices',    p:0,  cal:2,   f:0,    sf:0,   mf:0,   chol:0,   carb:0,   fib:0, sug:0, na:2,   k:21,  ca:0, fe:0,  vitA:0,  vitC:0,  vitD:0,  vitE:0,  vitK:0,  vitB6:0, vitB12:0,  folate:1,  zn:0,   mg_:1,  se:0,  omega3:0,    micro:6, price:{us:0.12,ne:0.14,mw:0.11,so:0.10,we:0.13}, hormoneM:[],                       hormoneF:[] },
+  { id:135,name:'Dark Chocolate (85%)', unit:'1 oz (28g)',  cat:'spices',    p:2,  cal:170, f:12,   sf:7,   mf:4,   chol:1,   carb:13,  fib:3, sug:5, na:6,   k:201, ca:2, fe:18, vitA:0,  vitC:0,  vitD:0,  vitE:1,  vitK:1,  vitB6:0, vitB12:0,  folate:0,  zn:8,   mg_:16, se:5,  omega3:0.03, micro:7, price:{us:0.55,ne:0.62,mw:0.52,so:0.48,we:0.58}, hormoneM:['mg','zn'],              hormoneF:['mg','fe'] },
+
+  // ─── FERMENTED (Pahwa & Goyal 2024 probiotics row) ────────────────────
+  { id:140,name:'Sauerkraut',           unit:'½ cup (75g)', cat:'fermented', p:1,  cal:14,  f:0,    sf:0,   mf:0,   chol:0,   carb:3,   fib:2, sug:0, na:460, k:124, ca:2, fe:6,  vitA:1,  vitC:18, vitD:0,  vitE:1,  vitK:11, vitB6:5, vitB12:0,  folate:6,  zn:1,   mg_:3,  se:1,  omega3:0,    micro:5, price:{us:0.30,ne:0.35,mw:0.28,so:0.25,we:0.32}, hormoneM:[],                       hormoneF:['vitC','probiotics'] },
+  { id:141,name:'Kimchi',               unit:'½ cup (75g)', cat:'fermented', p:1,  cal:11,  f:0.2,  sf:0,   mf:0,   chol:0,   carb:2,   fib:1, sug:0, na:498, k:67,  ca:3, fe:8,  vitA:5,  vitC:24, vitD:0,  vitE:1,  vitK:30, vitB6:6, vitB12:0,  folate:6,  zn:1,   mg_:3,  se:0,  omega3:0,    micro:6, price:{us:0.35,ne:0.40,mw:0.32,so:0.30,we:0.38}, hormoneM:[],                       hormoneF:['vitC','probiotics'] },
+  { id:142,name:'Kefir (plain)',        unit:'1 cup (240g)',cat:'fermented', p:9,  cal:104, f:2,    sf:1.5, mf:0.5, chol:10,  carb:12,  fib:0, sug:0, na:130, k:376, ca:24,fe:0,  vitA:2,  vitC:0,  vitD:25, vitE:0,  vitK:0,  vitB6:5, vitB12:24, folate:5,  zn:5,   mg_:7,  se:9,  omega3:0,    micro:6, price:{us:0.85,ne:0.95,mw:0.80,so:0.75,we:0.90}, hormoneM:['ca','vitD'],            hormoneF:['ca','vitD','b12','probiotics'] },
 ];
 
 // Apply BLS overrides on top of the hand-curated baseline. Each entry in

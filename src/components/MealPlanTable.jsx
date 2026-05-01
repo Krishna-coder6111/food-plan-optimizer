@@ -55,7 +55,7 @@ function QtyControl({ food, lockedQty, onLock, onUnlock }) {
   );
 }
 
-export default function MealPlanTable({ plan, totals, targets, locks, onLock, onUnlock, onExclude }) {
+export default function MealPlanTable({ plan, totals, targets, locks, pins = new Set(), onLock, onUnlock, onExclude, onTogglePin, newlyAdded = new Set() }) {
   const [sort, setSort] = useState({ col: 'protein', dir: 'desc' });
 
   if (!plan.length) {
@@ -94,7 +94,7 @@ export default function MealPlanTable({ plan, totals, targets, locks, onLock, on
     <div className="bg-white rounded-2xl border border-stone-200 p-4 mb-4 overflow-x-auto shadow-sm">
       <div className="flex justify-between items-baseline mb-3">
         <h2 className="font-display text-lg font-bold">Daily Meal Plan</h2>
-        <span className="text-2xs text-stone-400">click a column to sort · −/+ to adjust · × to exclude</span>
+        <span className="text-2xs text-stone-400">click a column to sort · −/+ adjust · 📌 pin · × exclude</span>
       </div>
       <table className="w-full text-sm">
         <thead>
@@ -115,8 +115,10 @@ export default function MealPlanTable({ plan, totals, targets, locks, onLock, on
         <tbody>
           {sorted.map(f => {
             const lockedQty = locks?.get(f.id);
+            const isPinned = pins?.has?.(f.id);
+            const isNew = newlyAdded?.has?.(f.id);
             return (
-              <tr key={f.id} className="border-b border-stone-100 hover:bg-stone-50/50">
+              <tr key={f.id} className={`border-b border-stone-100 hover:bg-stone-50/50 transition-colors duration-1000 ${isNew ? 'bg-sage-100/60' : ''}`}>
                 <td className="py-2 px-1">
                   <span
                     className="w-2 h-2 rounded-full inline-block"
@@ -139,11 +141,23 @@ export default function MealPlanTable({ plan, totals, targets, locks, onLock, on
                 <td className="py-2 px-1 text-stone-500">{f._fib}g</td>
                 <td className="py-2 px-1"><MicroBarWithTip food={f} servings={f.servings} /></td>
                 <td className="py-2 px-1">
-                  <button
-                    onClick={() => onExclude(f.id)}
-                    className="text-red-400 hover:text-red-600 text-sm"
-                    aria-label={`Exclude ${f.name}`}
-                  >×</button>
+                  {/* 3-button action group: pin · qty-already-shown · exclude */}
+                  <div className="flex items-center gap-1.5 justify-end">
+                    {onTogglePin && (
+                      <button
+                        onClick={() => onTogglePin(f.id)}
+                        className={`text-sm leading-none ${isPinned ? 'text-purple-600 hover:text-purple-700' : 'text-stone-300 hover:text-purple-500'}`}
+                        title={isPinned ? `Unpin ${f.name} (currently forced into the plan)` : `Pin ${f.name} (force ≥1 serving in every plan)`}
+                        aria-label={isPinned ? `Unpin ${f.name}` : `Pin ${f.name}`}
+                      >📌</button>
+                    )}
+                    <button
+                      onClick={() => onExclude(f.id)}
+                      className="text-red-400 hover:text-red-600 text-base leading-none"
+                      title={`Exclude ${f.name}`}
+                      aria-label={`Exclude ${f.name}`}
+                    >×</button>
+                  </div>
                 </td>
               </tr>
             );

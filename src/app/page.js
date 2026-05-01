@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useCallback, useEffect, Fragment } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef, Fragment } from 'react';
 import { FOODS, CATEGORIES, REGIONS } from '../data/foods';
 import { CITIES, CITY_MAP } from '../data/cities';
 import { MACRO_PRESETS, ACTIVITY_LEVELS, MAX_SERVINGS, STORE_TIERS, antioxScore, antiInflammScore } from '../lib/constants';
@@ -204,6 +204,12 @@ export default function Home() {
     [excluded],
   );
 
+  // Track which foods just appeared in the plan since the last solve so the
+  // table can flash a green-fade highlight on those rows. The ref holds the
+  // previous plan's ids; the state holds the diff for ~1.5s, then clears.
+  const prevPlanIdsRef = useRef(new Set());
+  const [newlyAdded, setNewlyAdded] = useState(new Set());
+
   // run the solver (debounced, off idle)
   const { result, pending } = useOptimizer({
     foods: availableFoods,
@@ -215,6 +221,25 @@ export default function Home() {
     pins,
     mode,
   });
+
+  // Diff plan ids to flag newly-added rows. Skip the very first solve
+  // (everything would be "new"). Clear after 1500ms so the row settles
+  // back to its normal background.
+  useEffect(() => {
+    if (!result?.plan) return;
+    const ids = new Set(result.plan.map(f => f.id));
+    if (prevPlanIdsRef.current.size > 0) {
+      const added = new Set();
+      for (const id of ids) if (!prevPlanIdsRef.current.has(id)) added.add(id);
+      if (added.size > 0) {
+        setNewlyAdded(added);
+        const t = setTimeout(() => setNewlyAdded(new Set()), 1500);
+        prevPlanIdsRef.current = ids;
+        return () => clearTimeout(t);
+      }
+    }
+    prevPlanIdsRef.current = ids;
+  }, [result]);
 
   // ─── callbacks ────────────────────────────────────────────────────────
   const toggleExclude = useCallback((id) => {
@@ -252,8 +277,18 @@ export default function Home() {
   const togglePin = useCallback((id) => {
     setPins(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else              next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+        return next;
+      }
+      // CAP at 1 active pin. javascript-lp-solver's simplex degenerates
+      // on certain 2+ pin combinations (cycles internally with no way for
+      // us to interrupt — the deadline guard only checks between solver
+      // calls). Until we move the solver into a terminable Web Worker,
+      // hard-cap to 1 to keep the UI responsive. Pinning a 2nd food
+      // replaces the first.
+      next.clear();
+      next.add(id);
       return next;
     });
     // Pinning a food un-excludes it (otherwise the LP can't include it).
@@ -506,9 +541,12 @@ export default function Home() {
             totals={result.totals}
             targets={targets}
             locks={locks}
+            pins={pins}
             onLock={lockQty}
             onUnlock={unlockQty}
             onExclude={toggleExclude}
+            onTogglePin={togglePin}
+            newlyAdded={newlyAdded}
           />
 
           <LivePricesPanel plan={result.plan} city={city} />

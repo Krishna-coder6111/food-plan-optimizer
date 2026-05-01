@@ -229,17 +229,29 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
   // a time (hardest first). Previous version halved all floors on first
   // failure — that's why folate hit 280% while vitA was at 6%.
   //
+  // DEADLINE: each solver.Solve call can be slow when many user pins are
+  // active and constraints fight each other. Bail out of the relaxation
+  // cascade if cumulative wall-clock exceeds DEADLINE_MS so the UI never
+  // freezes (this was the "broken when I clicked pin" bug). The result
+  // shape is identical to a normal infeasible result — just with
+  // `timedOut: true` flagged in the warnings.
+  //
+  const DEADLINE_MS = 1500;
+  const t0 = Date.now();
+  const past = () => Date.now() - t0 > DEADLINE_MS;
+
   const relaxOrder = ['vitD', 'vitE', 'ca', 'vitK', 'vitA', 'vitC', 'folate',
                       'vitB6', 'vitB12', 'zn', 'fe', 'mg_', 'se'];
 
   let model = buildModel();
   let result = solver.Solve(model);
   const relaxed = [];
+  let pinsRelaxed = false;
+  let timedOut = false;
 
   for (const nutrient of relaxOrder) {
     if (result.feasible) break;
-    const currentFloor = NUTRIENT_OPTIMA[nutrient].min;
-    // drop this nutrient's floor to 0 (slack penalty still applies)
+    if (past()) { timedOut = true; break; }
     const overrides = Object.fromEntries(relaxed.map(n => [n, 0]));
     overrides[nutrient] = 0;
     model = buildModel(overrides);
@@ -247,12 +259,29 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
     relaxed.push(nutrient);
   }
 
-  // Last-resort: relax calorie window if still infeasible
-  if (!result.feasible) {
+  // Calorie window relax
+  if (!result.feasible && !past()) {
     model.constraints.cal_min = { min: Math.round(targets.calories * 0.85) };
     model.constraints.cal_max = { max: Math.round(targets.calories * 1.15) };
     result = solver.Solve(model);
   }
+
+  // Last resort: drop user pins (they may be physically incompatible with
+  // each other, e.g. 6 fish + 4 beef + calorie cap). Without this the LP
+  // can hang indefinitely; better to give the user a feasible plan plus a
+  // visible warning that their pins were too tight.
+  if ((!result.feasible || past()) && pins.size > 0) {
+    pinsRelaxed = true;
+    const overrides = Object.fromEntries(relaxed.map(n => [n, 0]));
+    model = buildModel(overrides);
+    // Strip pin constraints from the rebuilt model
+    for (const f of foods) {
+      delete model.constraints[`pin_f${f.id}`];
+      if (model.variables[`f${f.id}`]) delete model.variables[`f${f.id}`][`pin_f${f.id}`];
+    }
+    result = solver.Solve(model);
+  }
+  if (past()) timedOut = true;
 
   // ─── Parse plan ─────────────────────────────────────────────────────
   const plan = [];
@@ -352,6 +381,12 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
 
   // ─── Absorption interaction warnings ────────────────────────────────
   const warnings = [];
+  if (pinsRelaxed) {
+    warnings.push('Your pinned foods couldn\'t all coexist with the nutrient/calorie targets — pins were dropped to find a feasible plan. Try unpinning a few.');
+  }
+  if (timedOut) {
+    warnings.push('Solver hit its time budget; the plan shown may be approximate. Try removing some pins or excluded foods.');
+  }
   if (totals.ca > 0 && totals.zn > 0 && totals.ca / totals.zn > 4) {
     warnings.push('High calcium:zinc ratio may reduce zinc absorption. Space high-Ca and high-Zn foods across meals.');
   }

@@ -41,6 +41,8 @@ export const MAX_SERVINGS = {
   fruits: 4,
   nuts: 3,
   fats: 3,
+  spices: 2,     // 1–2 tsp/day per spice; tea up to 3 cups
+  fermented: 2,  // ½–1 cup/day of sauerkraut/kimchi/kefir
   supplement: 2,
 };
 
@@ -166,21 +168,34 @@ const ANTIINFL_BY_CAT = {
 };
 
 const ANTIINFL_OVERRIDES = [
-  // strongly anti-inflammatory
-  [/wild salmon|sardine|mackerel|anchov/i,            -8],
-  [/walnut|chia|flax/i,                                -7],   // ALA + lignans
-  [/extra virgin olive oil/i,                          -7],   // oleocanthal, polyphenols
-  [/turmeric|ginger|cinnamon|garlic|oregano/i,        -10],
-  [/blueberr|blackberr|raspberr|cranberr|berr/i,      -7],
-  [/kale|spinach|chard|collard/i,                      -6],
-  [/broccoli|brussels|cauliflower|cabbage/i,           -5],
-  [/dark chocolate|cocoa/i,                            -6],
-  [/green tea|matcha/i,                                -8],
-  // pro-inflammatory leaning
-  [/butter|coconut oil/i,                              +3],   // saturated fat heavy
-  [/ground beef 80\/20|liver/i,                        +2],   // higher sat fat / arachidonic acid
-  [/whey protein|casein/i,                              0],   // neutral
-  [/white rice|white bread/i,                          +2],   // refined carbs
+  // ω-3 dense (Table 1 — ω-3 fatty acids row)
+  [/wild salmon|canned salmon|sardine|mackerel|anchov|herring/i,  -8],
+  [/walnut|chia|flax/i,                                            -7],   // ALA + lignans
+  // MUFA (Table 1 — MUFA row)
+  [/extra virgin olive oil/i,                                      -7],   // oleocanthal, polyphenols
+  [/avocado/i,                                                     -5],
+  [/almond|pecan|hazelnut|pistachio|cashew/i,                      -4],
+  // Phytochemicals (Table 1 — Phytochemicals row + Table 2 curcumin)
+  [/turmeric|ginger|cinnamon|garlic|oregano|rosemary|thyme/i,     -10],
+  // Antioxidants (Table 1 — Antioxidants row)
+  [/blueberr|blackberr|raspberr|cranberr|strawberr|berr/i,         -7],
+  [/kale|spinach|chard|collard|arugula/i,                          -6],
+  [/broccoli|brussels|cauliflower|cabbage|bok choy/i,              -5],
+  // Polyphenols (Table 1 — Polyphenols row + Table 2 catechin/resveratrol)
+  [/dark chocolate|cocoa/i,                                        -6],
+  [/green tea|matcha|black tea/i,                                  -8],
+  // Citrus / vit C (Table 1 — Vit & minerals row)
+  [/orange|lemon|grapefruit|tangerine/i,                           -5],
+  // Probiotics (Table 1 — Probiotics row)
+  [/yogurt|kefir|sauerkraut|kimchi/i,                              -6],
+  // Legume polyphenols + fiber (Table 1 — Dietary fiber row)
+  [/lentil|chickpea|black bean|kidney bean|edamame|firm tofu|split pea/i, -4],
+  [/quinoa|brown rice|oats|whole wheat/i,                          -2],   // whole grains
+  // Pro-inflammatory leaning
+  [/butter|coconut oil/i,                                          +3],   // saturated fat heavy
+  [/ground beef 80\/20|liver/i,                                    +2],   // higher sat fat / arachidonic acid
+  [/whey protein|casein/i,                                          0],   // neutral
+  [/white rice|white bread|corn tortilla/i,                        +2],   // refined carbs
 ];
 
 export function antiInflammScore(food) {
@@ -251,6 +266,8 @@ export const BIOAVAIL_BY_CATEGORY = {
   fruits:     { fe: 0.40, zn: 0.65, ca: 0.40, vitB12: 0.00, folate: 0.55 },
   nuts:       { fe: 0.45, zn: 0.55, ca: 0.30, vitB12: 0.00, folate: 0.55 },
   fats:       { fe: 1.00, zn: 1.00, ca: 1.00, vitB12: 1.00 },
+  spices:     { fe: 0.50, zn: 0.50, ca: 0.40, vitB12: 0.00 },               // small doses anyway
+  fermented:  { fe: 0.45, zn: 0.70, ca: 0.50, vitB12: 0.10, folate: 0.70 }, // bacterial conversion improves some
   supplement: { fe: 0.85, zn: 1.00, ca: 1.00, vitB12: 0.50, folate: 1.00 }, // crystalline supplements
 };
 

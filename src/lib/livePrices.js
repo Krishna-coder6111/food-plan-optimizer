@@ -143,6 +143,29 @@ export async function fetchKrogerLocations(zip, radius = 15) {
 }
 
 /**
+ * Same as fetchKrogerLocations but takes lat/lng instead of ZIP.
+ * Useful when the user picks a city by name and we have its coords from
+ * the CITIES table.
+ */
+export async function fetchKrogerLocationsNear(lat, lng, radius = 15) {
+  if (!PROXY_BASE || lat == null || lng == null) return [];
+  const key = `kr:loc:${lat.toFixed(2)},${lng.toFixed(2)}:${radius}`;
+  return getCached(key, async () => {
+    try {
+      const url = `${PROXY_BASE}/kroger/locations?${new URLSearchParams({
+        lat: String(lat), lng: String(lng), radius,
+      })}`;
+      const r = await fetch(url);
+      if (!r.ok) return [];
+      const body = await r.json();
+      return body.locations || [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+/**
  * Search products at a specific Kroger store. Returns first ~10 hits.
  * { items: [{ productId, brand, desc, price, promo, size, image }] }
  */

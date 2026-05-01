@@ -9,7 +9,7 @@ import { useOptimizer } from '../lib/useOptimizer';
 import { usePersistentState, setSerialize, setDeserialize, mapSerialize, mapDeserialize } from '../lib/usePersistentState';
 import { loadProfiles, saveProfiles, captureSnapshot, makeProfileId, PROFILE_FIELDS } from '../lib/profiles';
 import { buildShoppingList } from '../lib/weeklyPlan';
-import { fetchLivePricesBatch, isUsingProxy, fetchKrogerLocations, comparePriceAcrossStores } from '../lib/livePrices';
+import { fetchLivePricesBatch, isUsingProxy, fetchKrogerLocations, fetchKrogerLocationsNear, comparePriceAcrossStores } from '../lib/livePrices';
 
 import UsMap from '../components/UsMap';
 import MealPlanTable from '../components/MealPlanTable';
@@ -1130,34 +1130,77 @@ function ShoppingListView({ plan, city, storeTier }) {
 // ─── Compare prices across stores (Kroger live API) ─────────────────────────
 
 function ComparePricesPanel({ plan, days }) {
-  const [zip, setZip] = useState('');
-  const [stores, setStores] = useState([]);          // available locations
-  const [picked, setPicked] = useState([]);          // chosen locationIds
+  const [query, setQuery] = useState('');                    // ZIP or city name
+  const [stores, setStores] = useState([]);                  // accumulated locations
+  const [picked, setPicked] = useState([]);                  // chosen locationIds
+  const [searchedTags, setSearchedTags] = useState([]);      // ['02115', 'Atlanta GA'] — for chip removal
   const [loadingStores, setLoadingStores] = useState(false);
-  const [rows, setRows] = useState([]);              // [{ food, byLoc: Map<id, item> }, ...]
+  const [rows, setRows] = useState([]);
   const [loadingPrices, setLoadingPrices] = useState(false);
   const [error, setError] = useState(null);
 
+  // Accept either a 5-digit ZIP or a fuzzy match against our known
+  // CITIES table (case-insensitive substring on name OR "name, state").
+  // Returns { tag, lookup } where lookup is what we hand to the proxy.
+  const resolveQuery = useCallback((q) => {
+    const trimmed = q.trim();
+    if (!trimmed) return null;
+    if (/^\d{5}$/.test(trimmed)) return { tag: trimmed, lookup: { zip: trimmed } };
+    const needle = trimmed.toLowerCase();
+    const c = CITIES.find(x =>
+      x.name.toLowerCase().includes(needle)
+      || `${x.name}, ${x.state}`.toLowerCase().includes(needle)
+      || x.state.toLowerCase() === needle
+    );
+    if (c) return { tag: `${c.name}, ${c.state}`, lookup: { lat: c.lat, lng: c.lng } };
+    return null;
+  }, []);
+
   const onLookup = useCallback(async () => {
-    if (!zip.match(/^\d{5}$/)) { setError('Enter a 5-digit ZIP'); return; }
+    const resolved = resolveQuery(query);
+    if (!resolved) {
+      setError('Enter a 5-digit ZIP or a city name in our list (Boston, Atlanta, Chicago, etc.)');
+      return;
+    }
+    if (searchedTags.includes(resolved.tag)) {
+      setError(`Already searched "${resolved.tag}". Pick stores from below.`);
+      setQuery('');
+      return;
+    }
     setError(null);
     setLoadingStores(true);
-    setRows([]); setPicked([]);
     try {
-      const list = await fetchKrogerLocations(zip);
-      setStores(list);
-      // Auto-select up to 3 nearest stores so the user has something
-      // to compare immediately.
-      setPicked(list.slice(0, Math.min(3, list.length)).map(s => s.locationId));
-      if (list.length === 0) {
-        setError('No Kroger-family stores near this ZIP. (Kroger covers about 2,800 stores in 35 US states. Try a different ZIP if your area isn\'t served.)');
+      const list = resolved.lookup.zip
+        ? await fetchKrogerLocations(resolved.lookup.zip)
+        : await fetchKrogerLocationsNear(resolved.lookup.lat, resolved.lookup.lng);
+      const tagged = list.map(s => ({ ...s, _tag: resolved.tag }));
+      // Dedupe by locationId in case stores show up in multiple radii
+      const merged = [...stores];
+      for (const s of tagged) {
+        if (!merged.find(x => x.locationId === s.locationId)) merged.push(s);
+      }
+      setStores(merged);
+      setSearchedTags(prev => [...prev, resolved.tag]);
+      setQuery('');
+      // Auto-pick the first 3 stores from this lookup if nothing's selected yet
+      if (picked.length === 0 && tagged.length > 0) {
+        setPicked(tagged.slice(0, Math.min(3, tagged.length)).map(s => s.locationId));
+      }
+      if (tagged.length === 0) {
+        setError(`No Kroger-family stores near "${resolved.tag}". Kroger covers ~2,800 stores in 35 US states; many cities (NYC, Boston, Seattle) aren't covered.`);
       }
     } catch (e) {
       setError(`Couldn't reach the proxy: ${e.message}`);
     } finally {
       setLoadingStores(false);
     }
-  }, [zip]);
+  }, [query, picked, stores, searchedTags, resolveQuery]);
+
+  const removeTag = (tag) => {
+    setStores(prev => prev.filter(s => s._tag !== tag));
+    setPicked(prev => prev.filter(id => stores.find(s => s.locationId === id)?._tag !== tag));
+    setSearchedTags(prev => prev.filter(t => t !== tag));
+  };
 
   const onCompare = useCallback(async () => {
     if (picked.length === 0) return;
@@ -1201,23 +1244,21 @@ function ComparePricesPanel({ plan, days }) {
         <span className="text-2xs text-stone-400 font-mono">live · Kroger Catalog API</span>
       </div>
       <p className="text-xs text-stone-400 mb-3">
-        Look up your shopping list at multiple Kroger-family stores in your ZIP — Fred Meyer, Ralphs, Smith&apos;s, Harris Teeter, King Soopers, etc. We use the cheapest matching product per store. Limit 4 stores.
+        Search by <span className="font-mono">ZIP</span> or <span className="font-mono">city name</span>. Add multiple to compare across cities (Atlanta vs Dallas, etc). Pick up to 4 stores total. Cheapest matching product per store; cheapest cart highlighted.
       </p>
 
       <div className="flex gap-2 flex-wrap items-center mb-3">
         <input
           type="text"
-          inputMode="numeric"
-          maxLength={5}
-          value={zip}
-          onChange={e => setZip(e.target.value.replace(/\D/g, ''))}
+          value={query}
+          onChange={e => setQuery(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && onLookup()}
-          placeholder="ZIP (e.g. 02115)"
-          className="px-3 py-1.5 rounded-lg border border-stone-200 text-sm font-mono focus:outline-none focus:border-terra-400 w-32"
+          placeholder="ZIP (02115) or city (Atlanta)"
+          className="px-3 py-1.5 rounded-lg border border-stone-200 text-sm focus:outline-none focus:border-terra-400 w-56"
         />
         <button
           onClick={onLookup}
-          disabled={loadingStores || zip.length !== 5}
+          disabled={loadingStores || query.length === 0}
           className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-terra-600 text-white hover:bg-terra-700 disabled:opacity-30 disabled:cursor-not-allowed transition"
         >{loadingStores ? 'Finding stores…' : 'Find stores'}</button>
         {stores.length > 0 && (
@@ -1233,25 +1274,48 @@ function ComparePricesPanel({ plan, days }) {
         <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">{error}</div>
       )}
 
+      {searchedTags.length > 0 && (
+        <div className="flex gap-1.5 flex-wrap mb-2">
+          {searchedTags.map(tag => (
+            <span key={tag} className="inline-flex items-center gap-1 bg-stone-100 rounded-lg pl-2 pr-1 py-0.5 text-2xs text-stone-700 border border-stone-200">
+              {tag}
+              <button onClick={() => removeTag(tag)} className="text-stone-400 hover:text-red-500 px-1" aria-label={`Remove ${tag}`}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
+
       {stores.length > 0 && (
         <div className="mb-3">
-          <div className="text-2xs uppercase tracking-wider text-stone-400 font-semibold mb-1.5">Stores near {zip}</div>
-          <div className="flex gap-1.5 flex-wrap">
-            {stores.map(s => {
-              const sel = picked.includes(s.locationId);
-              return (
-                <button
-                  key={s.locationId}
-                  onClick={() => togglePick(s.locationId)}
-                  className={`text-xs px-2 py-1 rounded-lg border transition ${sel ? 'border-sage-500 bg-sage-50 text-sage-700' : 'border-stone-200 text-stone-500 hover:border-stone-400'}`}
-                  title={`${s.name}${s.address ? ` — ${s.address.addressLine1}, ${s.address.city}, ${s.address.state} ${s.address.zipCode}` : ''}`}
-                >
-                  {sel && '✓ '}{s.name}
-                  <span className="text-2xs text-stone-400 ml-1">{s.address?.city}</span>
-                </button>
-              );
-            })}
+          <div className="text-2xs uppercase tracking-wider text-stone-400 font-semibold mb-1.5">
+            {stores.length} store{stores.length === 1 ? '' : 's'} found · {picked.length}/4 picked
           </div>
+          {/* Group by source tag so cross-city stores are visually separated. */}
+          {searchedTags.map(tag => {
+            const ofTag = stores.filter(s => s._tag === tag);
+            if (ofTag.length === 0) return null;
+            return (
+              <div key={tag} className="mb-1.5">
+                <div className="text-[9px] uppercase tracking-wider text-stone-300 mb-0.5">{tag}</div>
+                <div className="flex gap-1.5 flex-wrap">
+                  {ofTag.map(s => {
+                    const sel = picked.includes(s.locationId);
+                    return (
+                      <button
+                        key={s.locationId}
+                        onClick={() => togglePick(s.locationId)}
+                        className={`text-xs px-2 py-1 rounded-lg border transition ${sel ? 'border-sage-500 bg-sage-50 text-sage-700' : 'border-stone-200 text-stone-500 hover:border-stone-400'}`}
+                        title={`${s.name}${s.address ? ` — ${s.address.addressLine1}, ${s.address.city}, ${s.address.state} ${s.address.zipCode}` : ''}`}
+                      >
+                        {sel && '✓ '}{s.name}
+                        <span className="text-2xs text-stone-400 ml-1">{s.address?.city}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 

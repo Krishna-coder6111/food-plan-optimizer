@@ -229,15 +229,20 @@ async function krogerProducts(url, env) {
 
 async function krogerLocations(url, env) {
   const zip    = url.searchParams.get('zip');
+  const lat    = url.searchParams.get('lat');
+  const lng    = url.searchParams.get('lng');
   const radius = url.searchParams.get('radius') || '15';
-  if (!zip) throw new Error('missing zip');
-  const cacheKey = `kr:loc:${zip}:${radius}`;
+  if (!zip && !(lat && lng)) throw new Error('missing zip or lat/lng');
+  const cacheKey = zip ? `kr:loc:${zip}:${radius}` : `kr:loc:${lat},${lng}:${radius}`;
   const hit = await kvGet(env, cacheKey);
   if (hit) return { ...hit, cached: true };
 
   const token = await krogerToken(env);
   const base  = env.KROGER_API_BASE || 'https://api-ce.kroger.com/v1';
-  const qs = new URLSearchParams({ 'filter.zipCode.near': zip, 'filter.radiusInMiles': radius });
+  // Kroger accepts either filter.zipCode.near OR filter.lat.near + filter.lon.near
+  const qs = new URLSearchParams(zip
+    ? { 'filter.zipCode.near': zip, 'filter.radiusInMiles': radius }
+    : { 'filter.lat.near': lat, 'filter.lon.near': lng, 'filter.radiusInMiles': radius });
   const r = await fetch(`${base}/locations?${qs}`, {
     headers: { 'Authorization': `Bearer ${token}` },
   });
@@ -245,6 +250,7 @@ async function krogerLocations(url, env) {
   const body = await r.json();
   const result = {
     zip,
+    near: zip || `${lat},${lng}`,
     locations: (body.data || []).slice(0, 10).map(l => ({
       locationId: l.locationId,
       name:       l.name,

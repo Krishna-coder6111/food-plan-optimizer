@@ -259,7 +259,42 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
   const relaxOrder = ['vitD', 'vitE', 'ca', 'vitK', 'vitA', 'vitC', 'folate',
                       'vitB6', 'vitB12', 'zn', 'fe', 'mg_', 'se'];
 
-  let model = buildModel();
+  // PROACTIVE ceiling raise when ANY pin would obviously violate one.
+  // Floor-relaxation can't help with binding ceilings (Beef Liver chol
+  // 310 > cap 300; Sweet Potato vitA 380% > cap 300%) and slogging
+  // through 13 infeasible solves before discovering this is wasteful.
+  // Detect upfront and pre-relax. The user pinned the food on purpose.
+  const maxesRelaxed = [];
+  let baseModel = buildModel();
+  if (pins.size > 0) {
+    const pinned = foods.filter(f => pins.has(f.id));
+    const sumChol = pinned.reduce((s, f) => s + (f.chol || 0), 0);
+    const sumSat  = pinned.reduce((s, f) => s + (f.sf   || 0), 0);
+    const sumNa   = pinned.reduce((s, f) => s + (f.na   || 0), 0);
+    if (sumChol > (targets.maxChol ?? 300)) {
+      baseModel.constraints.chol_max = { max: Math.max(sumChol * 1.2, 400) };
+      maxesRelaxed.push('cholesterol');
+    }
+    if (sumSat > targets.maxSatFat) {
+      baseModel.constraints.satfat_max = { max: Math.max(sumSat * 1.2, targets.maxSatFat * 1.5) };
+      maxesRelaxed.push('saturated fat');
+    }
+    if (sumNa > 2300) {
+      baseModel.constraints.sodium_max = { max: Math.max(sumNa * 1.2, 3500) };
+      maxesRelaxed.push('sodium');
+    }
+    // Per-nutrient %DV: any pin pushing >cap → bump cap to 2× pin sum
+    for (const [n, range] of Object.entries(NUTRIENT_OPTIMA)) {
+      if (range.max <= 0) continue;
+      const sum = pinned.reduce((s, f) => s + (f[n] || 0), 0);
+      if (sum > range.max) {
+        baseModel.constraints[`n_${n}_max`] = { max: Math.round(sum * 2) };
+        maxesRelaxed.push(`${n} ceiling`);
+      }
+    }
+  }
+
+  let model = baseModel;
   let result = solver.Solve(model);
   const relaxed = [];
   let pinsRelaxed = false;
@@ -271,6 +306,17 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
     const overrides = Object.fromEntries(relaxed.map(n => [n, 0]));
     overrides[nutrient] = 0;
     model = buildModel(overrides);
+    // Re-apply the pin-driven ceiling overrides from the proactive pass
+    if (maxesRelaxed.length > 0) {
+      for (const k of ['chol_max', 'satfat_max', 'sodium_max']) {
+        if (baseModel.constraints[k]) model.constraints[k] = baseModel.constraints[k];
+      }
+      for (const [n, range] of Object.entries(NUTRIENT_OPTIMA)) {
+        if (range.max > 0 && baseModel.constraints[`n_${n}_max`]) {
+          model.constraints[`n_${n}_max`] = baseModel.constraints[`n_${n}_max`];
+        }
+      }
+    }
     result = solver.Solve(model);
     relaxed.push(nutrient);
   }
@@ -402,6 +448,9 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
   }
   if (timedOut) {
     warnings.push('Solver hit its time budget; the plan shown may be approximate. Try removing some pins or excluded foods.');
+  }
+  if (maxesRelaxed.length > 0) {
+    warnings.push(`To fit your pinned food(s), ceiling caps were loosened (${maxesRelaxed.slice(0, 3).join(', ')}${maxesRelaxed.length > 3 ? ', …' : ''}). Common when pinning organ meats (high chol), starchy veg (high vit A), or shellfish (high chol/sodium).`);
   }
   if (totals.ca > 0 && totals.zn > 0 && totals.ca / totals.zn > 4) {
     warnings.push('High calcium:zinc ratio may reduce zinc absorption. Space high-Ca and high-Zn foods across meals.');

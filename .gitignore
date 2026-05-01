@@ -6,6 +6,11 @@ out/
 
 # Pipeline secrets (never commit your API keys)
 data/pipeline/.env
+
+# Cloudflare Worker secrets (FatSecret + Kroger client IDs/secrets)
+worker/.dev.vars
+worker/.wrangler/
+
 *.tsbuildinfo
 
 # Raw data files (too large for git — download via pipeline)

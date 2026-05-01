@@ -1,27 +1,34 @@
 /**
  * Nutrient Engine — live-data proxy Worker.
  *
- * Routes:
- *   GET  /off-prices?lat=..&lng=..&product=..       → Open Food Facts Prices
- *   GET  /off-prices?barcode=..                     → OFF Prices by barcode
- *   GET  /fatsecret/search?q=..                     → FatSecret food search
- *   GET  /fatsecret/food?id=..                      → FatSecret food details
+ * Routes (all GET, all return JSON):
+ *   /off-prices?lat&lng&product       → Open Food Facts Prices (no auth)
+ *   /off-prices?barcode               → OFF Prices by EAN/UPC
+ *   /fatsecret/search?q               → FatSecret food search (OAuth2)
+ *   /fatsecret/food?id                → FatSecret food details
+ *   /kroger/products?term&zip         → Kroger Catalog products + prices
+ *   /kroger/locations?zip&radius      → nearest Kroger stores
+ *   /health                           → liveness probe
  *
- * Cache strategy:
- *   - Every successful response is stored in KV under the request
- *     URL key for 24h. Stale-while-revalidate is NOT implemented in
- *     this scaffold (would need a queue/cron worker).
- *   - GET-only; mutations are explicitly rejected.
+ * Why a Worker (and not direct browser calls)?
+ *   - FatSecret + Kroger require OAuth2 client_credentials with secrets.
+ *     Those secrets MUST stay server-side.
+ *   - FatSecret enforces an IP allowlist; the Worker pins outbound traffic
+ *     to Cloudflare's egress range, which we whitelist once.
+ *   - Edge KV cache: 24h TTL on prices, 50min on OAuth tokens (they live
+ *     for ~60min). Cache-warm round-trip ~5–15ms vs ~150–800ms cold.
  *
- * IMPORTANT: this is a SCAFFOLD. The /fatsecret/* handlers stub the
- * OAuth1 signing — fill in `signOAuth1()` with HMAC-SHA1 + nonce/
- * timestamp + percent-encoded params before deploying. Recommend the
- * `oauth-1.0a` package or the inline implementation in FatSecret's docs.
+ * OAuth tokens are cached in KV under `oauth:fatsecret` and `oauth:kroger`.
+ * The Worker fetches a fresh token on cache miss using the configured
+ * client_id/secret.
  */
 
-const CACHE_TTL_SECONDS = 24 * 60 * 60;     // 24h
-const FATSECRET_BASE = 'https://platform.fatsecret.com/rest/server.api';
-const OFF_PRICES_BASE = 'https://prices.openfoodfacts.org/api/v1';
+const PRICE_TTL = 24 * 60 * 60;   // 24h for grocery prices
+const TOKEN_TTL = 50 * 60;        // 50min — tokens live 60min, refresh early
+
+const OFF_API           = 'https://prices.openfoodfacts.org/api/v1';
+const FATSECRET_TOKEN   = 'https://oauth.fatsecret.com/connect/token';
+const FATSECRET_API     = 'https://platform.fatsecret.com/rest/server.api';
 
 export default {
   async fetch(request, env, ctx) {
@@ -32,11 +39,13 @@ export default {
     try {
       let payload;
       switch (url.pathname) {
-        case '/off-prices':       payload = await offPrices(url, env, ctx);    break;
-        case '/fatsecret/search': payload = await fatsecretSearch(url, env);   break;
-        case '/fatsecret/food':   payload = await fatsecretFood(url, env);     break;
-        case '/health':           payload = { ok: true };                      break;
-        default:                  return json({ error: 'not found' }, 404, request, env);
+        case '/off-prices':         payload = await offPrices(url, env, ctx);          break;
+        case '/fatsecret/search':   payload = await fatsecretSearch(url, env);         break;
+        case '/fatsecret/food':     payload = await fatsecretFood(url, env);           break;
+        case '/kroger/products':    payload = await krogerProducts(url, env);          break;
+        case '/kroger/locations':   payload = await krogerLocations(url, env);         break;
+        case '/health':             payload = { ok: true, ts: Date.now() };            break;
+        default:                    return json({ error: 'not found' }, 404, request, env);
       }
       return json(payload, 200, request, env);
     } catch (err) {
@@ -46,70 +55,97 @@ export default {
 };
 
 // ─── Open Food Facts Prices ─────────────────────────────────────────────────
-//
-// Public, no auth. Docs: https://prices.openfoodfacts.org/api/docs
-//
-// We call /prices?location_lat=..&location_lng=..&radius=..&product_code=..
-// and reduce to {product_code, currency, median_price, n_observations}.
 
 async function offPrices(url, env, ctx) {
   const lat     = url.searchParams.get('lat');
   const lng     = url.searchParams.get('lng');
-  const product = url.searchParams.get('product');     // free-text
-  const barcode = url.searchParams.get('barcode');     // EAN/UPC
-  const radius  = url.searchParams.get('radius') || '20';   // km
+  const product = url.searchParams.get('product');
+  const barcode = url.searchParams.get('barcode');
+  const radius  = url.searchParams.get('radius') || '20';
 
-  const cacheKey = `off:${barcode || product}:${lat},${lng}:${radius}`;
-  const cached = await env.PRICE_CACHE?.get(cacheKey, 'json');
-  if (cached) return { ...cached, cached: true };
+  const cacheKey = `off:${barcode || product || ''}:${lat},${lng}:${radius}`;
+  const hit = await kvGet(env, cacheKey);
+  if (hit) return { ...hit, cached: true };
 
   const params = new URLSearchParams({
     page_size: '50',
     ...(lat && lng ? { location_lat: lat, location_lng: lng, radius } : {}),
-    ...(barcode ? { product_code: barcode } : {}),
-    ...(product ? { product_name__icontains: product } : {}),
+    ...(barcode   ? { product_code: barcode } : {}),
+    ...(product   ? { product_name__icontains: product } : {}),
   });
-  const r = await fetch(`${OFF_PRICES_BASE}/prices?${params}`);
+  const r = await fetch(`${OFF_API}/prices?${params}`);
   if (!r.ok) throw new Error(`OFF Prices ${r.status}`);
   const body = await r.json();
 
-  const items = body.items || [];
-  const prices = items.map(p => p.price).filter(p => p > 0).sort((a, b) => a - b);
+  const items  = body.items || [];
+  const valid  = items.filter(p => typeof p.price === 'number' && p.price > 0);
+  const prices = valid.map(p => p.price).sort((a, b) => a - b);
   const median = prices.length ? prices[Math.floor(prices.length / 2)] : null;
   const result = {
-    product:    barcode || product,
-    median_price: median,
-    currency:   items[0]?.currency || 'USD',
+    product:        barcode || product,
+    median_price:   median,
+    currency:       valid[0]?.currency || 'USD',
     n_observations: prices.length,
-    sample:     items.slice(0, 5).map(p => ({ price: p.price, location: p.location?.osm_display_name })),
+    sample:         valid.slice(0, 5).map(p => ({
+      price: p.price, currency: p.currency,
+      location: p.location?.osm_display_name || p.location_id,
+      date: p.date,
+    })),
   };
-
-  if (env.PRICE_CACHE && median) {
-    ctx.waitUntil(env.PRICE_CACHE.put(cacheKey, JSON.stringify(result), { expirationTtl: CACHE_TTL_SECONDS }));
-  }
+  if (median) ctx.waitUntil(kvPut(env, cacheKey, result, PRICE_TTL));
   return result;
 }
 
-// ─── FatSecret ──────────────────────────────────────────────────────────────
+// ─── FatSecret (OAuth 2.0 client_credentials) ───────────────────────────────
 //
-// REST endpoint, OAuth1 signed. Docs: https://platform.fatsecret.com/api
+// Token endpoint: POST /connect/token with grant_type=client_credentials,
+//   scope=basic (or 'premier' if your account is Premier Free).
+// API endpoint:   GET /rest/server.api with method=...&format=json,
+//   Authorization: Bearer <token>
 //
-// Premier Free tier: US data, attribution required.
-// Plain Basic tier: 5,000 calls/day, US only.
+// FatSecret enforces an IP allowlist. Whitelist Cloudflare's egress IPs
+// in your FatSecret dashboard — they publish a list at
+// https://www.cloudflare.com/ips-v4 (Workers use the same egress as the
+// edge network for outbound fetch).
+
+async function fatsecretToken(env) {
+  const cached = await kvGet(env, 'oauth:fatsecret');
+  if (cached?.access_token) return cached.access_token;
+
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    scope:      'basic',
+  });
+  const auth = btoa(`${env.FATSECRET_CLIENT_ID}:${env.FATSECRET_CLIENT_SECRET}`);
+  const r = await fetch(FATSECRET_TOKEN, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': `Basic ${auth}` },
+    body,
+  });
+  if (!r.ok) throw new Error(`FatSecret token ${r.status}: ${await r.text()}`);
+  const tok = await r.json();    // { access_token, expires_in, token_type, ... }
+  await kvPut(env, 'oauth:fatsecret', tok, Math.min(TOKEN_TTL, (tok.expires_in || 3600) - 60));
+  return tok.access_token;
+}
+
+async function fatsecretCall(method, params, env) {
+  const token = await fatsecretToken(env);
+  const qs = new URLSearchParams({ method, format: 'json', ...params });
+  const r = await fetch(`${FATSECRET_API}?${qs}`, {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  if (!r.ok) throw new Error(`FatSecret ${method} ${r.status}`);
+  return r.json();
+}
 
 async function fatsecretSearch(url, env) {
   const q = url.searchParams.get('q');
   if (!q) throw new Error('missing q');
   const cacheKey = `fs:search:${q}`;
-  const cached = await env.PRICE_CACHE?.get(cacheKey, 'json');
-  if (cached) return { ...cached, cached: true };
-
-  const params = { method: 'foods.search', search_expression: q, format: 'json' };
-  const signed = await signOAuth1('GET', FATSECRET_BASE, params, env);
-  const r = await fetch(`${FATSECRET_BASE}?${new URLSearchParams(signed)}`);
-  if (!r.ok) throw new Error(`FatSecret ${r.status}`);
-  const body = await r.json();
-  if (env.PRICE_CACHE) await env.PRICE_CACHE.put(cacheKey, JSON.stringify(body), { expirationTtl: CACHE_TTL_SECONDS });
+  const hit = await kvGet(env, cacheKey);
+  if (hit) return { ...hit, cached: true };
+  const body = await fatsecretCall('foods.search', { search_expression: q }, env);
+  await kvPut(env, cacheKey, body, PRICE_TTL);
   return body;
 }
 
@@ -117,67 +153,128 @@ async function fatsecretFood(url, env) {
   const id = url.searchParams.get('id');
   if (!id) throw new Error('missing id');
   const cacheKey = `fs:food:${id}`;
-  const cached = await env.PRICE_CACHE?.get(cacheKey, 'json');
-  if (cached) return { ...cached, cached: true };
-
-  const params = { method: 'food.get.v4', food_id: id, format: 'json' };
-  const signed = await signOAuth1('GET', FATSECRET_BASE, params, env);
-  const r = await fetch(`${FATSECRET_BASE}?${new URLSearchParams(signed)}`);
-  if (!r.ok) throw new Error(`FatSecret ${r.status}`);
-  const body = await r.json();
-  if (env.PRICE_CACHE) await env.PRICE_CACHE.put(cacheKey, JSON.stringify(body), { expirationTtl: CACHE_TTL_SECONDS });
+  const hit = await kvGet(env, cacheKey);
+  if (hit) return { ...hit, cached: true };
+  const body = await fatsecretCall('food.get.v4', { food_id: id }, env);
+  await kvPut(env, cacheKey, body, PRICE_TTL);
   return body;
 }
 
-// ─── OAuth1 signing for FatSecret ───────────────────────────────────────────
+// ─── Kroger (OAuth 2.0 client_credentials) ──────────────────────────────────
 //
-// SCAFFOLD: implement HMAC-SHA1 signing. The shape FatSecret expects:
-//   1. Add oauth_consumer_key, oauth_nonce, oauth_signature_method=HMAC-SHA1,
-//      oauth_timestamp, oauth_version=1.0 to params.
-//   2. Build the base string: GET&urlencode(URL)&urlencode(sorted params).
-//   3. Build the signing key: urlencode(consumer_secret) + '&' + ''.
-//      (Two-legged auth — no token secret.)
-//   4. Sign with HMAC-SHA1, base64 it, set as oauth_signature.
+// Token: POST /v1/connect/oauth2/token with grant_type=client_credentials
+//        & scope (depends on the API products you enabled).
+// Products API: GET /v1/products with filter.term, filter.locationId.
 //
-// See FatSecret docs § "Authentication via OAuth 1.0".
+// We use scope='product.compact' for the catalog read.
 
-async function signOAuth1(method, baseUrl, params, env) {
-  const consumerKey    = env.FATSECRET_CONSUMER_KEY;
-  const consumerSecret = env.FATSECRET_CONSUMER_SECRET;
-  if (!consumerKey || !consumerSecret) throw new Error('FatSecret credentials not configured');
+async function krogerToken(env) {
+  const cached = await kvGet(env, 'oauth:kroger');
+  if (cached?.access_token) return cached.access_token;
 
-  const oauthParams = {
-    oauth_consumer_key:     consumerKey,
-    oauth_nonce:            crypto.randomUUID().replace(/-/g, ''),
-    oauth_signature_method: 'HMAC-SHA1',
-    oauth_timestamp:        Math.floor(Date.now() / 1000).toString(),
-    oauth_version:          '1.0',
-    ...params,
-  };
-  const enc = (s) => encodeURIComponent(s).replace(/[!*'()]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
-  const sortedParamStr = Object.keys(oauthParams).sort()
-    .map(k => `${enc(k)}=${enc(oauthParams[k])}`).join('&');
-  const baseString  = [method, enc(baseUrl), enc(sortedParamStr)].join('&');
-  const signingKey  = `${enc(consumerSecret)}&`;
-
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(signingKey),
-    { name: 'HMAC', hash: 'SHA-1' },
-    false, ['sign'],
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(baseString));
-  const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig)));
-
-  return { ...oauthParams, oauth_signature: sigB64 };
+  const base = env.KROGER_API_BASE || 'https://api-ce.kroger.com/v1';
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    scope:      'product.compact',
+  });
+  const auth = btoa(`${env.KROGER_CLIENT_ID}:${env.KROGER_CLIENT_SECRET}`);
+  const r = await fetch(`${base}/connect/oauth2/token`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': `Basic ${auth}` },
+    body,
+  });
+  if (!r.ok) throw new Error(`Kroger token ${r.status}: ${await r.text()}`);
+  const tok = await r.json();    // { access_token, expires_in, ... }
+  await kvPut(env, 'oauth:kroger', tok, Math.min(TOKEN_TTL, (tok.expires_in || 1800) - 60));
+  return tok.access_token;
 }
 
-// ─── CORS / response helpers ────────────────────────────────────────────────
+async function krogerProducts(url, env) {
+  const term       = url.searchParams.get('term');
+  const locationId = url.searchParams.get('locationId') || '';
+  if (!term) throw new Error('missing term');
+  const cacheKey = `kr:products:${term}:${locationId}`;
+  const hit = await kvGet(env, cacheKey);
+  if (hit) return { ...hit, cached: true };
+
+  const token = await krogerToken(env);
+  const base  = env.KROGER_API_BASE || 'https://api-ce.kroger.com/v1';
+  const qs = new URLSearchParams({
+    'filter.term':  term,
+    ...(locationId ? { 'filter.locationId': locationId } : {}),
+    'filter.limit': '20',
+  });
+  const r = await fetch(`${base}/products?${qs}`, {
+    headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
+  });
+  if (!r.ok) throw new Error(`Kroger products ${r.status}`);
+  const body = await r.json();
+  // Trim to what the client actually uses.
+  const result = {
+    term, locationId,
+    items: (body.data || []).slice(0, 10).map(p => ({
+      productId:  p.productId,
+      brand:      p.brand,
+      desc:       p.description,
+      categories: p.categories,
+      price:      p.items?.[0]?.price?.regular ?? null,
+      promo:      p.items?.[0]?.price?.promo ?? null,
+      size:       p.items?.[0]?.size,
+      image:      p.images?.[0]?.sizes?.[0]?.url,
+    })),
+  };
+  await kvPut(env, cacheKey, result, PRICE_TTL);
+  return result;
+}
+
+async function krogerLocations(url, env) {
+  const zip    = url.searchParams.get('zip');
+  const radius = url.searchParams.get('radius') || '15';
+  if (!zip) throw new Error('missing zip');
+  const cacheKey = `kr:loc:${zip}:${radius}`;
+  const hit = await kvGet(env, cacheKey);
+  if (hit) return { ...hit, cached: true };
+
+  const token = await krogerToken(env);
+  const base  = env.KROGER_API_BASE || 'https://api-ce.kroger.com/v1';
+  const qs = new URLSearchParams({ 'filter.zipCode.near': zip, 'filter.radiusInMiles': radius });
+  const r = await fetch(`${base}/locations?${qs}`, {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  if (!r.ok) throw new Error(`Kroger locations ${r.status}`);
+  const body = await r.json();
+  const result = {
+    zip,
+    locations: (body.data || []).slice(0, 10).map(l => ({
+      locationId: l.locationId,
+      name:       l.name,
+      chain:      l.chain,
+      address:    l.address,
+      latitude:   l.geolocation?.latitude,
+      longitude:  l.geolocation?.longitude,
+    })),
+  };
+  await kvPut(env, cacheKey, result, PRICE_TTL);
+  return result;
+}
+
+// ─── KV helpers ─────────────────────────────────────────────────────────────
+
+async function kvGet(env, key) {
+  if (!env.PRICE_CACHE) return null;
+  return env.PRICE_CACHE.get(key, 'json');
+}
+async function kvPut(env, key, value, ttl) {
+  if (!env.PRICE_CACHE) return;
+  return env.PRICE_CACHE.put(key, JSON.stringify(value), { expirationTtl: ttl });
+}
+
+// ─── CORS ───────────────────────────────────────────────────────────────────
 
 function corsHeaders(request, env) {
   const origin = request.headers.get('Origin') || '';
   const allowed = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim());
-  const ok = allowed.includes(origin);
+  const ok = allowed.includes(origin) || allowed.includes('*');
   return {
     'Access-Control-Allow-Origin':  ok ? origin : 'null',
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -195,7 +292,7 @@ function json(body, status, request, env) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Type':  'application/json; charset=utf-8',
       'Cache-Control': 'public, max-age=300',
       ...corsHeaders(request, env),
     },

@@ -1,34 +1,28 @@
-# Cloudflare Worker config — proxies live grocery/nutrition APIs.
-#
-# Why a Worker?
-#   - FatSecret needs OAuth1 signing with a secret key. We MUST NOT ship
-#     that key to the browser, so the Worker is where it lives.
-#   - Open Food Facts Prices is public + CORS-friendly, so technically
-#     the browser can hit it directly. We still proxy it to:
-#       (a) cache on Cloudflare's edge KV (massive latency win)
-#       (b) normalize the response shape across providers
-#       (c) keep a single SDK boundary in the client
-#
-# Deploy:
-#   cd worker
-#   npx wrangler login
-#   npx wrangler kv namespace create PRICE_CACHE
-#   # paste the namespace id below
-#   npx wrangler secret put FATSECRET_CONSUMER_KEY
-#   npx wrangler secret put FATSECRET_CONSUMER_SECRET
-#   npx wrangler deploy
+# Cloudflare Worker config — proxies live grocery / nutrition APIs.
+# Step-by-step setup is in docs/API_PROXY.md.
 
 name = "nutrient-engine-proxy"
 main = "src/index.js"
 compatibility_date = "2026-01-01"
 
-# Replace with the id printed by `wrangler kv namespace create PRICE_CACHE`.
-# Edge-cached prices live here; default TTL is 24h. Cache-warm: ~5ms.
-# Cache-miss: 100–800ms depending on provider.
+# KV namespace for OAuth token + price caching. Create once with:
+#   npx wrangler kv namespace create PRICE_CACHE
+# then paste the printed `id` below. The same command also prints a
+# `preview_id` — only needed if you want a separate KV namespace for
+# `wrangler dev`; otherwise it reuses the production one.
 [[kv_namespaces]]
 binding = "PRICE_CACHE"
 id = "REPLACE_WITH_NAMESPACE_ID"
 
-# CORS — allow your deployed site + local dev. Update before deploying.
+# CORS — set to the origin that calls this Worker.
+# Use '*' for testing; lock it down before going to prod.
 [vars]
 ALLOWED_ORIGINS = "https://krishna-coder6111.github.io,http://localhost:3000"
+KROGER_API_BASE = "https://api-ce.kroger.com/v1"
+
+# Secrets are NOT in this file. Push them with:
+#   npx wrangler secret put FATSECRET_CLIENT_ID
+#   npx wrangler secret put FATSECRET_CLIENT_SECRET
+#   npx wrangler secret put KROGER_CLIENT_ID
+#   npx wrangler secret put KROGER_CLIENT_SECRET
+# For local `wrangler dev`, they live in .dev.vars (gitignored).

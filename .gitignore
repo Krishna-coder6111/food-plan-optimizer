@@ -13,8 +13,11 @@ worker/.wrangler/
 
 *.tsbuildinfo
 
-# Raw data files (too large for git — download via pipeline)
-data/raw/*.csv
-data/raw/*.json
-data/raw/*.zip
+# Raw data files (too large for git — download via pipeline).
+# Ignore EVERYTHING in data/raw recursively: the USDA zip extracts to
+# nested directories like data/raw/FoodData_Central_branded_food_csv_*/
+# whose food.csv (~150 MB) and food_nutrient.csv (~2 GB) blow past
+# GitHub's 100 MB file limit.
+data/raw/*
+data/raw/**/*
 !data/raw/.gitkeep

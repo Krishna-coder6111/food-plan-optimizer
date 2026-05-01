@@ -4,6 +4,10 @@ out/
 .env*.local
 .env
 
+# Python build artifacts (the pipeline scripts are Python)
+__pycache__/
+*.pyc
+
 # Pipeline secrets (never commit your API keys)
 data/pipeline/.env
 

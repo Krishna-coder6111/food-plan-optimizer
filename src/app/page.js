@@ -498,7 +498,7 @@ export default function Home() {
               </select>
             </div>
             <div>
-              <label className="text-2xs uppercase tracking-wider text-stone-400 font-medium block mb-1" title={storeTier.desc}>Store Tier</label>
+              <label className="text-2xs uppercase tracking-wider text-stone-400 font-medium block mb-1" title={storeTier?.desc}>Store Tier</label>
               <select value={storeTierId} onChange={e => setStoreTierId(e.target.value)}
                 className={`w-full px-3 py-1.5 rounded-lg border text-sm bg-white focus:outline-none focus:border-terra-400 ${storeTierId ? 'border-stone-200' : 'border-amber-400'}`}>
                 <option value="">— Choose a store —</option>

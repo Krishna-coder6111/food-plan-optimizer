@@ -28,8 +28,9 @@ import json
 import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-IN_PATH  = os.path.join(HERE, '..', 'processed', 'usda_foods.json')
-OUT_PATH = os.path.join(HERE, '..', '..', 'src', 'data', 'usdaFoods.generated.js')
+IN_PATH         = os.path.join(HERE, '..', 'processed', 'usda_foods.json')
+BRANDED_IN_PATH = os.path.join(HERE, '..', 'processed', 'branded_foods.json')
+OUT_PATH        = os.path.join(HERE, '..', '..', 'src', 'data', 'usdaFoods.generated.js')
 
 # Category inference — order matters (more specific first).
 # Each tuple: (regex pattern, category id matching CATEGORIES in foods.js)
@@ -122,6 +123,24 @@ def main():
     with open(IN_PATH) as f:
         usda = json.load(f)
 
+    # Optional: extend with branded foods if the user processed them too
+    # (USDA_INCLUDE_BRANDED=1 in build_all.py). Branded entries get a
+    # `_branded` marker so the UI can show a small badge. We DEDUPE on
+    # description-lowercased to avoid showing "Whole Milk" twice.
+    if os.path.exists(BRANDED_IN_PATH):
+        with open(BRANDED_IN_PATH) as f:
+            branded = json.load(f)
+        seen_names = {(r.get('description') or '').lower() for r in usda}
+        added = 0
+        for rec in branded:
+            name = (rec.get('description') or '').lower()
+            if name in seen_names: continue
+            seen_names.add(name)
+            rec['_branded'] = True
+            usda.append(rec)
+            added += 1
+        print(f'  + merged {added} branded foods (dedupe vs Foundation by name)')
+
     # Skip USDA records with vanishingly small calorie or protein counts —
     # those are usually water, gum, condiments. They confuse the LP.
     foods = []
@@ -165,7 +184,8 @@ def main():
             'price':    price,
             'hormoneM': hormone_tags(rec, 'M'),
             'hormoneF': hormone_tags(rec, 'F'),
-            '_usda':    True,   # marker for the UI
+            '_usda':    True,
+            '_branded': bool(rec.get('_branded')),   # marker for branded subset
         })
 
     # Dedupe by id (in case fdc_id mod-collides)

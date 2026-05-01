@@ -8,6 +8,7 @@ import { calcTDEE, calcTargets } from '../lib/tdee';
 import { useOptimizer } from '../lib/useOptimizer';
 import { usePersistentState, setSerialize, setDeserialize, mapSerialize, mapDeserialize } from '../lib/usePersistentState';
 import { loadProfiles, saveProfiles, captureSnapshot, makeProfileId, PROFILE_FIELDS } from '../lib/profiles';
+import { HEALTH_CONDITIONS, applyHealthConditions } from '../lib/healthConditions';
 import { buildShoppingList } from '../lib/weeklyPlan';
 import { fetchLivePricesBatch, isUsingProxy, fetchKrogerLocations, fetchKrogerLocationsNear, comparePriceAcrossStores } from '../lib/livePrices';
 
@@ -167,6 +168,10 @@ export default function Home() {
   // constraints; 'nutrients' weights the nutrient-deficit penalty 5× higher
   // so the solver pays more for distance from the optimum.
   const [mode, setMode]         = usePersistentState('ne.mode', 'cost');
+  // Health conditions — multi-select. Each selected condition adjusts
+  // targets (e.g. hypertension caps sodium at 1500mg) and biases the
+  // supplement recommender toward condition-relevant SKUs.
+  const [conditions, setConditions] = usePersistentState('ne.conditions', []);
   const [tab, setTab]           = useState('plan');
   const [showProfile, setShowProfile] = useState(true);
 
@@ -248,9 +253,12 @@ export default function Home() {
   const calculatedTdee = calcTDEE(gender, weightLbs, totalHeightIn, age, activity);
   const tdee = targetOverrides.tdee ?? calculatedTdee;
   const baseTargets = calcTargets(tdee, preset, weightLbs, gender);
-  // User overrides take precedence over the calculated targets.
+  // Apply health-condition adjustments BEFORE the user's manual overrides
+  // so explicit user overrides still win.
+  const conditionResult = applyHealthConditions(baseTargets, conditions);
+  const conditionedTargets = conditionResult.targets;
   const targets = {
-    ...baseTargets,
+    ...conditionedTargets,
     ...Object.fromEntries(Object.entries(targetOverrides).filter(([k, v]) => v != null && k !== 'tdee')),
   };
 
@@ -549,6 +557,8 @@ export default function Home() {
           {targets.carbs}g C / {targets.fat}g F
         </div>
       </section>
+
+      <HealthConditionsPanel selected={conditions} setSelected={setConditions} />
 
       {/* tabs */}
       <nav className="flex gap-1 bg-stone-100 rounded-xl p-1 mb-4 overflow-x-auto">
@@ -1386,6 +1396,73 @@ function ComparePricesPanel({ plan, days }) {
         </div>
       )}
     </div>
+  );
+}
+
+// Multi-checkbox grid grouped by HEALTH_CONDITIONS.group. Selected
+// conditions adjust LP targets via applyHealthConditions() and bias the
+// supplement recommender.
+function HealthConditionsPanel({ selected, setSelected }) {
+  const [open, setOpen] = useState(selected.length > 0);
+
+  // Group entries by .group field for visual grouping.
+  const groups = HEALTH_CONDITIONS.reduce((m, c) => {
+    (m[c.group] ||= []).push(c);
+    return m;
+  }, {});
+
+  const toggle = (id) => {
+    setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  return (
+    <section className="mb-4">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full text-left flex items-baseline justify-between mb-2"
+      >
+        <span className="text-2xs uppercase tracking-wider text-stone-400 font-medium">
+          Health & dietary conditions
+          {selected.length > 0 && <span className="ml-2 text-purple-600 font-mono">{selected.length} active</span>}
+        </span>
+        <span className="text-2xs text-stone-400">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="bg-white rounded-2xl border border-stone-200 p-3">
+          <p className="text-2xs text-stone-400 leading-relaxed mb-3">
+            Optional. Each selection adjusts your nutrient targets per NIH ODS / ACOG / AHA guidance and biases the supplement recommender. Your manual target overrides still take precedence.
+          </p>
+          {Object.entries(groups).map(([group, items]) => (
+            <div key={group} className="mb-2 last:mb-0">
+              <div className="text-[9px] uppercase tracking-wider text-stone-300 mb-1">{group}</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {items.map(c => {
+                  const sel = selected.includes(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => toggle(c.id)}
+                      className={`text-left text-xs px-2.5 py-1.5 rounded-lg border transition ${sel ? 'border-purple-400 bg-purple-50' : 'border-stone-200 hover:border-stone-300'}`}
+                      title={c.summary}
+                    >
+                      <span className={`font-medium ${sel ? 'text-purple-700' : 'text-stone-700'}`}>
+                        {sel && '✓ '}{c.name}
+                      </span>
+                      <span className="block text-2xs text-stone-400 leading-snug mt-0.5">
+                        {c.summary}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          <p className="text-2xs text-stone-400 mt-3 italic">
+            Not medical advice. Consult a registered dietitian for personalised guidance.
+          </p>
+        </div>
+      )}
+    </section>
   );
 }
 

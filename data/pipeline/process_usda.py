@@ -52,7 +52,18 @@ DATASETS = {
         'prefix': 'FoodData_Central_sr_legacy_food_csv_2018-04',
         'data_type_filter': 'sr_legacy_food',
     },
+    'branded': {
+        'url':    'https://fdc.nal.usda.gov/fdc-datasets/FoodData_Central_branded_food_csv_2024-10-31.zip',
+        'prefix': 'FoodData_Central_branded_food_csv_2024-10-31',
+        'data_type_filter': 'branded_food',
+    },
 }
+
+# Branded dataset has ~1.7M items. Bundling all of them into the static
+# JS bundle would push it to 30MB+. Default cap to keep it usable;
+# override with USDA_BRANDED_LIMIT env var. For true 1.7M coverage,
+# use the runtime FatSecret API via the Cloudflare Worker instead.
+BRANDED_DEFAULT_LIMIT = int(os.environ.get('USDA_BRANDED_LIMIT', '2000'))
 
 # USDA nutrient IDs → our internal keys. These numeric IDs come from
 # nutrient.csv and are stable across releases.
@@ -169,6 +180,13 @@ def process_usda(dataset_key='foundation'):
     if 'data_type' in foods.columns:
         foods = foods[foods['data_type'] == ds['data_type_filter']]
         print(f'    → {len(foods)} {ds["data_type_filter"]} rows')
+
+    # Branded is huge (~1.7M). Cap to BRANDED_DEFAULT_LIMIT to keep the JS
+    # bundle sane. Sort by description so the cut is deterministic across
+    # runs. For the full set, use FatSecret API at runtime instead.
+    if dataset_key == 'branded' and len(foods) > BRANDED_DEFAULT_LIMIT:
+        print(f'    capping to {BRANDED_DEFAULT_LIMIT} (USDA_BRANDED_LIMIT to override)')
+        foods = foods.sort_values('description').head(BRANDED_DEFAULT_LIMIT)
 
     # food_nutrient.csv is the big one (~10M rows for SR Legacy)
     # Load only the columns we care about

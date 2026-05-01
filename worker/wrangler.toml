@@ -26,3 +26,11 @@ KROGER_API_BASE = "https://api-ce.kroger.com/v1"
 #   npx wrangler secret put KROGER_CLIENT_ID
 #   npx wrangler secret put KROGER_CLIENT_SECRET
 # For local `wrangler dev`, they live in .dev.vars (gitignored).
+
+# Cron Trigger — pre-warm KV cache for the 20 most-shopped Kroger
+# metros every day at 06:00 UTC (well before any US user wakes up).
+# Each tick warms 20 city × 30-term lookups = ~600 cached entries.
+# Kroger limits 10K calls/day per app; this uses ~600/day, plenty.
+# To trigger manually: `curl https://<your-worker>.workers.dev/warm`.
+[triggers]
+crons = ["0 6 * * *"]

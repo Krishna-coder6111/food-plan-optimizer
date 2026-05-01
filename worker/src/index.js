@@ -45,6 +45,7 @@ export default {
         case '/kroger/products':    payload = await krogerProducts(url, env);          break;
         case '/kroger/locations':   payload = await krogerLocations(url, env);         break;
         case '/health':             payload = { ok: true, ts: Date.now() };            break;
+        case '/warm':               payload = await prewarm(env);                      break;
         default:                    return json({ error: 'not found' }, 404, request, env);
       }
       return json(payload, 200, request, env);
@@ -52,7 +53,87 @@ export default {
       return json({ error: err.message || String(err) }, 502, request, env);
     }
   },
+
+  // Cron Trigger — runs whatever schedule is in wrangler.toml.
+  // We pre-warm the KV cache for the most-likely queries: Kroger
+  // locations near each of our 20 tracked cities + the top 30 generic
+  // food terms at the first store of each. After this runs, the next
+  // user click on Compare hits a warm cache and returns in ~150ms
+  // instead of ~1.5s.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(prewarm(env));
+  },
 };
+
+// 20 cities × 30 terms = 600 KV writes / cron tick. Kroger limit 10k/day
+// so daily cron is fine; budget allows hourly too if traffic warrants.
+const PREWARM_CITIES = [
+  // [name, lat, lng]
+  ['Atlanta',     33.75, -84.39],
+  ['Cincinnati',  39.10, -84.51],
+  ['Chicago',     41.88, -87.63],
+  ['Dallas',      32.78, -96.80],
+  ['Houston',     29.76, -95.37],
+  ['Denver',      39.74,-104.99],
+  ['Phoenix',     33.45,-112.07],
+  ['Memphis',     35.15, -90.05],
+  ['Nashville',   36.16, -86.78],
+  ['Indianapolis',39.77, -86.16],
+  ['Columbus',    39.96, -82.99],
+  ['Detroit',     42.33, -83.05],
+  ['Charlotte',   35.23, -80.84],
+  ['Louisville',  38.25, -85.76],
+  ['Birmingham',  33.52, -86.80],
+  ['Knoxville',   35.96, -83.92],
+  ['Lexington',   38.04, -84.50],
+  ['Toledo',      41.66, -83.55],
+  ['Cleveland',   41.50, -81.69],
+  ['Richmond',    37.54, -77.43],
+];
+
+const PREWARM_TERMS = [
+  'chicken breast', 'ground beef', 'salmon', 'tuna', 'eggs', 'milk',
+  'greek yogurt', 'cottage cheese', 'cheddar', 'rolled oats', 'brown rice',
+  'whole wheat bread', 'pasta', 'sweet potato', 'broccoli', 'spinach',
+  'kale', 'frozen berries', 'banana', 'apple', 'orange', 'lentils',
+  'black beans', 'chickpeas', 'tofu', 'almonds', 'peanut butter',
+  'olive oil', 'avocado', 'whey protein',
+];
+
+async function prewarm(env) {
+  let warmed = 0;
+  for (const [name, lat, lng] of PREWARM_CITIES) {
+    // Warm /kroger/locations for each city
+    const locKey = `kr:loc:${lat},${lng}:15`;
+    const locHit = await kvGet(env, locKey);
+    let firstLocId = null;
+    if (locHit) {
+      firstLocId = locHit.locations?.[0]?.locationId;
+    } else {
+      try {
+        const u = new URL('https://example.com/kroger/locations');
+        u.searchParams.set('lat', lat); u.searchParams.set('lng', lng);
+        const out = await krogerLocations(u, env);
+        firstLocId = out.locations?.[0]?.locationId;
+        warmed++;
+      } catch { /* skip dead cities */ }
+    }
+    if (!firstLocId) continue;
+    // Warm /kroger/products for the popular terms at the first store
+    for (const term of PREWARM_TERMS) {
+      const pkey = `kr:products:${term}:${firstLocId}`;
+      if (await kvGet(env, pkey)) continue;
+      try {
+        const u = new URL('https://example.com/kroger/products');
+        u.searchParams.set('term', term);
+        u.searchParams.set('locationId', firstLocId);
+        await krogerProducts(u, env);
+        warmed++;
+      } catch { /* keep going */ }
+    }
+  }
+  return { ok: true, warmed, ts: Date.now() };
+}
 
 // ─── Open Food Facts Prices ─────────────────────────────────────────────────
 

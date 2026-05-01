@@ -1,0 +1,12 @@
+# Copy to `.dev.vars` and fill in. The real `.dev.vars` is gitignored.
+# For production, push each value with: npx wrangler secret put NAME
+
+# FatSecret OAuth 2.0 (https://platform.fatsecret.com/api-editions)
+FATSECRET_CLIENT_ID=
+FATSECRET_CLIENT_SECRET=
+
+# Kroger Developer (https://developer.kroger.com/manage/apps)
+# Use api.kroger.com for production, api-ce.kroger.com for certification.
+KROGER_CLIENT_ID=
+KROGER_CLIENT_SECRET=
+KROGER_API_BASE=https://api-ce.kroger.com/v1

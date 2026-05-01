@@ -9,7 +9,7 @@ solves the diet problem (Stigler 1945) and tells you what to eat to hit
 your nutrient targets at the lowest possible cost in your city.
 
 > **Live demo:** https://krishna-coder6111.github.io/food-plan-optimizer/
-> *(After cloning: see [Deploying to GitHub Pages](#deploying-to-github-pages) for the one-time setup step before this URL works.)*
+> *(See [`docs/DEPLOY.md`](docs/DEPLOY.md) for the one-time setup step before pushing the deploy URL.)*
 
 ## What it does
 
@@ -25,7 +25,16 @@ your nutrient targets at the lowest possible cost in your city.
   calcium, animal vs plant zinc/B12, food vs fortified folate. The UI
   shows both labeled %DV and what your body actually absorbs.
 - **74-food database** with full USDA nutrient profiles, 5-region pricing,
-  and antioxidant scores (loosely indexed to deprecated USDA ORAC).
+  antioxidant scores (loosely indexed to deprecated USDA ORAC), and a
+  Dietary Inflammatory Index per food (anti / pro / neutral) derived
+  from Pahwa & Goyal 2024.
+- **Editable targets** — every macro / micro target the optimizer uses
+  (protein, calories, carbs, fat, fiber, sat fat, cholesterol, sugar)
+  can be overridden by clicking its tile. Overrides persist + show a
+  purple ring; "reset" reverts to the calculated value.
+- **Optimization mode toggle** — `cost` (default, cheapest plan that
+  hits every floor) or `nutrients` (5× the deficit penalty so the
+  solver pays more for distance from the optimum).
 - **20 US cities** with grocery cost indices, real US map (d3-geo Albers,
   Alaska + Hawaii inset), and local-food strategies.
 - **7 store tiers** — Costco/Aldi/Trader Joe's/Kroger/Sprouts/Whole Foods/
@@ -60,25 +69,6 @@ Open http://localhost:3000. Requires Node.js 18.17+ (Next 14 minimum).
 ### GitHub Codespaces
 
 `Code → Codespaces → Create codespace on main` → wait → `npm install && npm run dev` → open the forwarded port.
-
-## Deploying to GitHub Pages
-
-The `.github/workflows/deploy.yml` workflow builds the static export and
-publishes on every push to `main`.
-
-**One-time manual step before your first deploy will succeed:**
-
-1. Repo → **Settings** → **Pages**
-2. Under **Build and deployment**, set **Source** to **GitHub Actions**
-3. Save
-
-(The workflow's `GITHUB_TOKEN` is scoped to `pages: write` but cannot
-*create* the Pages site itself — that's an admin-level operation, hence
-the "Resource not accessible by integration" failure mode if you skip the
-manual toggle. See [`docs/DEPLOY.md`](docs/DEPLOY.md) for the full
-walkthrough.)
-
-After that, the site lives at `https://<owner>.github.io/<repo-name>/`.
 
 ## Tabs
 
@@ -257,6 +247,18 @@ env var, the SDK no-ops and the app uses baseline prices.
 - Lönnerdal (2000) — Zinc absorption
 - Weaver et al. (1999) — Calcium absorption from various sources
 
+### Anti-inflammatory diet index
+- Pahwa & Goyal (2024) — *Dietary Strategies in the Modulation of
+  Chronic Inflammation*, [PMC11576095](https://pmc.ncbi.nlm.nih.gov/articles/PMC11576095/).
+  Tables 1 + 2 are the source for the per-food anti-inflammatory score
+  (`antiInflammScore` in `src/lib/constants.js`): nine dietary
+  categories (ω-3, MUFA, antioxidants, polyphenols, fiber,
+  phytochemicals, probiotics, vit/min, low-GI) plus the nine specific
+  phytochemicals (curcumin, quercetin, resveratrol, catechin, luteolin,
+  kaempferol, β-carotene, rutin, genistein).
+- Shivappa et al. (2014) — Original DII methodology (sign convention:
+  negative = anti-inflammatory).
+
 ## Roadmap
 
 - [x] LP optimizer with slack-variable optimum targeting
@@ -269,14 +271,17 @@ env var, the SDK no-ops and the app uses baseline prices.
 - [x] Sortable + filterable tables
 - [x] Hover-to-see-micros tooltips
 - [x] Antioxidant scoring
+- [x] Anti-inflammatory diet index (DII-style, from Pahwa & Goyal 2024)
 - [x] Storage-horizon awareness (water vs fat-soluble vs long-term)
 - [x] Saved profile slots (multi-eater)
-- [x] Shopping List view
-- [x] Static GitHub Pages deploy
+- [x] Editable targets + cost/nutrients optimization mode
+- [x] Click-to-pin food suggestions on deficient micronutrients
+- [x] Shopping List view (with N-day customization)
 - [x] BLS pipeline → foods.js loader
-- [x] Cloudflare Worker scaffold (OFF Prices + FatSecret)
-- [ ] Worker deployed and wired to live UI
-- [ ] Per-store filtering (once OFF Prices `location.osm_*` mapping exists)
+- [x] Cloudflare Worker (OFF Prices public + FatSecret OAuth2 + Kroger OAuth2)
+- [x] Direct OFF Prices fallback when Worker isn't deployed
+- [ ] Worker deployed + UI wired to live prices
+- [ ] Per-store filtering (Kroger locationId; OFF `osm_*` mapping)
 - [ ] Background pre-warming via Worker Cron Trigger
 - [ ] PWA support (offline, installable)
 - [ ] International expansion (India, UK) once OFF Prices coverage warrants

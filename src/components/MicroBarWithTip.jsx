@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { NUTRIENT_OPTIMA, antioxScore } from '../lib/constants';
+import { NUTRIENT_OPTIMA, antioxScore, antiInflammScore } from '../lib/constants';
 
 /**
  * MicroBarWithTip — the 10-segment micro bar, plus a hover/tap tooltip
@@ -54,6 +54,12 @@ export default function MicroBarWithTip({ food, servings = 1, max = 10 }) {
           </span>
           <span className="block mt-1 pt-1 border-t border-stone-100 text-2xs text-stone-500">
             antiox <span className="font-mono text-stone-700">{antioxScore(food)}/10</span>
+            {' · '}
+            <span title="Dietary Inflammatory Index — negative = anti-inflammatory">
+              DII <span className={`font-mono ${antiInflammScore(food) < -2 ? 'text-sage-700' : antiInflammScore(food) > 2 ? 'text-red-600' : 'text-stone-600'}`}>
+                {antiInflammScore(food) > 0 ? '+' : ''}{antiInflammScore(food)}
+              </span>
+            </span>
             {food.omega3 > 0 && <> · ω-3 {(food.omega3 * servings).toFixed(2)}g</>}
             {food.chol > 0 && <> · chol {Math.round((food.chol || 0) * servings)}mg</>}
           </span>

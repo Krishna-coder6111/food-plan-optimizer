@@ -25,10 +25,10 @@ function buildSig(args) {
   const pins    = args.pins    || new Set();
 
   const foodIds = foods.map(f => f.id).join(',');
-  const tgt     = `${targets.calories}|${targets.protein}|${targets.carbs}|${targets.fat}|${targets.fiber}|${targets.maxSatFat}|${targets.maxSugar}`;
+  const tgt     = `${targets.calories}|${targets.protein}|${targets.carbs}|${targets.fat}|${targets.fiber}|${targets.maxSatFat}|${targets.maxSugar}|${targets.maxChol}`;
   const lockSig = [...locks].sort((a, b) => a[0] - b[0]).map(([k, v]) => `${k}:${v}`).join(',');
   const pinSig  = [...pins].sort((a, b) => a - b).join(',');
-  return `${foodIds}::${tgt}::${args.region}::${args.costIndex}::${args.gender}::${lockSig}::${pinSig}`;
+  return `${foodIds}::${tgt}::${args.region}::${args.costIndex}::${args.gender}::${lockSig}::${pinSig}::${args.mode || 'cost'}`;
 }
 
 export function useOptimizer(args) {
@@ -62,7 +62,7 @@ export function useOptimizer(args) {
           a.region,
           a.costIndex,
           a.gender,
-          { locks: a.locks, pins: a.pins }
+          { locks: a.locks, pins: a.pins, mode: a.mode }
         );
         setResult(r);
       } catch (e) {

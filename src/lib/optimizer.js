@@ -66,9 +66,15 @@ function bioavail(food, nutrient) {
  * }}
  */
 export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {}) {
-  const { locks = new Map(), pins = new Set() } = opts;
+  const { locks = new Map(), pins = new Set(), mode = 'cost' } = opts;
   const costMult = costIndex / 100;
   const regionKey = region || 'us';
+
+  // Mode tuning. 'cost' = baseline penalties (solver finds cheapest plan
+  // that hits floors). 'nutrients' = 5× the deficit penalty so the solver
+  // pays more food cost to push each micronutrient toward its optimum.
+  // Both modes still enforce the same hard floors / ceilings.
+  const modeMult = mode === 'nutrients' ? 5 : 1;
 
   const buildModel = (floorOverrides = {}) => {
     const model = {
@@ -80,15 +86,17 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
     };
 
     // ─── Macronutrient bounds ─────────────────────────────────────────
+    // Cholesterol uses targets.maxChol (default 300 mg) so the user's
+    // editable target box can tighten it. Sat fat ceiling likewise.
     model.constraints.protein_min = { min: targets.protein };
     model.constraints.protein_max = { max: Math.round(targets.protein * 1.15) };
     model.constraints.cal_min     = { min: Math.round(targets.calories * 0.93) };
     model.constraints.cal_max     = { max: Math.round(targets.calories * 1.07) };
     model.constraints.satfat_max  = { max: targets.maxSatFat };
-    model.constraints.chol_max    = { max: 300 };
+    model.constraints.chol_max    = { max: targets.maxChol ?? 300 };
     model.constraints.sugar_max   = { max: targets.maxSugar };
     model.constraints.fiber_min   = { min: Math.max(30, targets.fiber) };
-    model.constraints.sodium_max  = { max: 2300 };
+    model.constraints.sodium_max  = { max: targets.maxSodium ?? 2300 };
 
     // ─── Micronutrient ranges with soft deviation slacks ──────────────
     //
@@ -202,8 +210,8 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
     // parked at the floor even with the penalty. Verified by an
     // equivalent scipy.linprog run during development.
     //
-    const P_def = SOLVER_CONFIG.deficitPenaltyPerPct;
-    const P_exc = SOLVER_CONFIG.excessPenaltyPerPct;
+    const P_def = SOLVER_CONFIG.deficitPenaltyPerPct * modeMult;
+    const P_exc = SOLVER_CONFIG.excessPenaltyPerPct * modeMult;
     for (const nutrient of Object.keys(NUTRIENT_OPTIMA)) {
       const dName = `d_${nutrient}`;
       const eName = `e_${nutrient}`;
@@ -305,9 +313,10 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
     items.sort((a, b) => b.amount - a.amount);
     contributorsByNutrient[nutrient] = items;
   }
-  // Same shape but for omega-3 (grams) and cholesterol (mg) which the
-  // hormone tab cares about.
-  for (const key of ['omega3', 'chol']) {
+  // Same shape for the macros the UI surfaces in the meal-plan stats:
+  // protein (g), omega-3 (g), cholesterol (mg), saturated fat (g),
+  // added sugar (g), sodium (mg). Used by the stat-card hover tooltips.
+  for (const key of ['p', 'omega3', 'chol', 'sf', 'sug', 'na']) {
     const items = [];
     for (const f of plan) {
       const amt = (f[key] || 0) * f.servings;

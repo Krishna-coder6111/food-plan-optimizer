@@ -22,9 +22,21 @@ const STORAGE_TAG_STYLE = {
   long:  'bg-sage-50 text-sage-700',              // months of stores
 };
 
-function Bar({ nutrient, score }) {
+function Bar({ nutrient, score, allFoods = [], planIds = new Set(), pins = new Set(), onPin }) {
   const { label, actual, absorbed, min, opt, max, status, relaxed, storage, contributors } = score;
   const [expanded, setExpanded] = useState(false);
+
+  // Top food sources for this nutrient that aren't already in the plan.
+  // Useful when deficient — gives the user a one-click way to add the
+  // densest source for the missing nutrient.
+  const suggestions = expanded
+    ? allFoods
+        .filter(f => !planIds.has(f.id))
+        .map(f => ({ id: f.id, name: f.name, amount: f[nutrient] || 0 }))
+        .filter(x => x.amount > 0)
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, 5)
+    : [];
 
   const pct = Math.min(100, (actual / BAR_SCALE) * 100);
   const absPct = absorbed != null ? Math.min(100, (absorbed / BAR_SCALE) * 100) : null;
@@ -118,13 +130,35 @@ function Bar({ nutrient, score }) {
           ) : (
             <div className="italic text-stone-400">No plan item supplies meaningful {label.toLowerCase()}.</div>
           )}
+          {suggestions.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-stone-100">
+              <div className="text-2xs uppercase tracking-wider text-stone-400 font-semibold mb-1">Top sources NOT in plan</div>
+              <div className="grid grid-cols-[1fr_auto_auto] gap-x-3 gap-y-0.5">
+                {suggestions.map(s => (
+                  <div key={s.id} className="contents">
+                    <span>{s.name}</span>
+                    <span className="font-mono text-sage-700 text-right">{Math.round(s.amount)}%/serv</span>
+                    {pins.has(s.id) ? (
+                      <span className="text-2xs text-purple-600 font-mono">📌 pinned</span>
+                    ) : (
+                      <button
+                        onClick={() => onPin?.(s.id)}
+                        className="text-2xs text-sage-700 hover:text-sage-900 font-mono"
+                        title="Add to plan (pin ≥1 serving)"
+                      >+ add</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-export default function MicronutrientPanel({ nutrientScores, relaxed = [] }) {
+export default function MicronutrientPanel({ nutrientScores, relaxed = [], allFoods = [], planIds = new Set(), pins = new Set(), onPin }) {
   if (!nutrientScores) return null;
   const entries = Object.entries(nutrientScores);
 
@@ -148,7 +182,8 @@ export default function MicronutrientPanel({ nutrientScores, relaxed = [] }) {
 
       <div>
         {entries.map(([nutrient, score]) => (
-          <Bar key={nutrient} nutrient={nutrient} score={score} />
+          <Bar key={nutrient} nutrient={nutrient} score={score}
+            allFoods={allFoods} planIds={planIds} pins={pins} onPin={onPin} />
         ))}
       </div>
 

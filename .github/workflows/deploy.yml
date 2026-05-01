@@ -51,6 +51,11 @@ jobs:
           # name from the GITHUB_REPOSITORY env var so this Just Works on a
           # fork too.
           NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
+          # Wire every visitor of the deployed site at the Cloudflare
+          # Worker proxy so the FatSecret + Kroger paths come alive (OFF
+          # Prices works direct-from-browser even without this; the
+          # Worker is for the auth'd providers and edge cache).
+          NEXT_PUBLIC_PRICES_API: https://nutrient-engine-proxy.singh-krish.workers.dev
         run: npm run build
 
       - name: Inject .nojekyll

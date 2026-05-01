@@ -110,6 +110,23 @@ function ContribHover({ contributors = [], unit = '', label }) {
   );
 }
 
+// URL-based escape hatch. If the user is locked out by stuck localStorage,
+// they can navigate to ?reset=1 (or wipe=1) to nuke every `ne.*` key
+// before any state hydrates. We do this AT MODULE LOAD time so it runs
+// before the React tree mounts.
+if (typeof window !== 'undefined') {
+  const sp = new URLSearchParams(window.location.search);
+  if (sp.has('reset') || sp.has('wipe')) {
+    for (const k of Object.keys(window.localStorage)) {
+      if (k.startsWith('ne.')) window.localStorage.removeItem(k);
+    }
+    // Strip the param so refreshes don't re-wipe.
+    sp.delete('reset'); sp.delete('wipe');
+    const url = window.location.pathname + (sp.toString() ? `?${sp}` : '');
+    window.history.replaceState({}, '', url);
+  }
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 export default function Home() {
@@ -120,9 +137,12 @@ export default function Home() {
   const [heightIn, setHeightIn] = usePersistentState('ne.heightIn', 10);
   const [weightLbs, setWeightLbs] = usePersistentState('ne.weightLbs', 170);
   const [activity, setActivity] = usePersistentState('ne.activity', 'moderate');
-  const [cityId, setCityId]     = usePersistentState('ne.cityId', 'boston');
+  // Location and store tier default to UNSELECTED — the optimizer waits
+  // for the user to pick. Forcing the choice prevents misleading "your
+  // plan in Boston" copy when the user hasn't actually told us where.
+  const [cityId, setCityId]     = usePersistentState('ne.cityId', '');
   const [presetId, setPresetId] = usePersistentState('ne.presetId', 'maingain');
-  const [storeTierId, setStoreTierId] = usePersistentState('ne.storeTierId', 'mainstream');
+  const [storeTierId, setStoreTierId] = usePersistentState('ne.storeTierId', '');
 
   // plan controls (excluded + locks + pins persisted; tab + profile-visibility ephemeral)
   const [excluded, setExcluded] = usePersistentState('ne.excluded', new Set(), {
@@ -131,8 +151,13 @@ export default function Home() {
   const [locks, setLocks]       = usePersistentState('ne.locks', new Map(), {
     serialize: mapSerialize, deserialize: mapDeserialize,
   });
+  // Cap pins to ≤1 at deserialize time (synchronous). javascript-lp-solver
+  // hits a simplex degeneracy on certain 2+ pin combinations and freezes
+  // mid-Solve, before any useEffect-based trim can intervene. Trimming in
+  // the deserializer means the bad state never even reaches the optimizer.
   const [pins, setPins]         = usePersistentState('ne.pins', new Set(), {
-    serialize: setSerialize, deserialize: setDeserialize,
+    serialize: setSerialize,
+    deserialize: (raw) => new Set(JSON.parse(raw).slice(0, 1)),
   });
   // Target overrides — user can type custom values that take precedence
   // over the calculated TDEE-driven targets. `null` for a field means "use
@@ -216,10 +241,18 @@ export default function Home() {
     });
   }, []);
 
-  const city    = CITIES[CITY_MAP[cityId]] || CITIES[0];
+  // city / storeTier are nullable now — the user must pick. We still
+  // fall back to sensible neutral defaults internally so the optimizer
+  // can run if it does reach this state, but the UI gates the plan
+  // tabs behind a "pick a location and store" prompt below.
+  const city    = cityId      ? (CITIES[CITY_MAP[cityId]] || null) : null;
+  const storeTier = storeTierId ? (STORE_TIERS.find(s => s.id === storeTierId) || null) : null;
   const preset  = MACRO_PRESETS[presetId];
-  const storeTier = STORE_TIERS.find(s => s.id === storeTierId) || STORE_TIERS[3];
-  const effectiveCostIndex = Math.round(city.costIndex * storeTier.mult);
+  const isReadyForPlan = !!(city && storeTier);
+  const effectiveCostIndex = isReadyForPlan
+    ? Math.round(city.costIndex * storeTier.mult)
+    : 100;
+  const safeRegion = city?.region || 'us';
   const totalHeightIn = heightFt * 12 + heightIn;
   const calculatedTdee = calcTDEE(gender, weightLbs, totalHeightIn, age, activity);
   const tdee = targetOverrides.tdee ?? calculatedTdee;
@@ -254,7 +287,7 @@ export default function Home() {
   const { result, pending } = useOptimizer({
     foods: availableFoods,
     targets,
-    region: city.region,
+    region: safeRegion,
     costIndex: effectiveCostIndex,
     gender,
     locks,
@@ -402,7 +435,8 @@ export default function Home() {
           Minimum Cost,<br />Maximum Nutrition
         </h1>
         <p className="text-xs text-stone-400 mt-1">
-          LP-optimized · 1g/lb protein · hormone-aware · regional pricing · {city.name}, {city.state}
+          LP-optimized · 1g/lb protein · hormone-aware · regional pricing
+          {isReadyForPlan && <> · {city.name}, {city.state}</>}
         </p>
       </header>
 
@@ -458,15 +492,17 @@ export default function Home() {
             <div>
               <label className="text-2xs uppercase tracking-wider text-stone-400 font-medium block mb-1">Location</label>
               <select value={cityId} onChange={e => setCityId(e.target.value)}
-                className="w-full px-3 py-1.5 rounded-lg border border-stone-200 text-sm bg-white focus:outline-none focus:border-terra-400">
-                {CITIES.map(c => <option key={c.id} value={c.id}>{c.name}, {c.state} ({c.costIndex > 100 ? '+' : ''}{c.costIndex - 100}%)</option>)}
+                className={`w-full px-3 py-1.5 rounded-lg border text-sm bg-white focus:outline-none focus:border-terra-400 ${cityId ? 'border-stone-200' : 'border-amber-400'}`}>
+                <option value="">— Choose a location —</option>
+                {CITIES.map(c => <option key={c.id} value={c.id}>{c.name}, {c.state}</option>)}
               </select>
             </div>
             <div>
               <label className="text-2xs uppercase tracking-wider text-stone-400 font-medium block mb-1" title={storeTier.desc}>Store Tier</label>
               <select value={storeTierId} onChange={e => setStoreTierId(e.target.value)}
-                className="w-full px-3 py-1.5 rounded-lg border border-stone-200 text-sm bg-white focus:outline-none focus:border-terra-400">
-                {STORE_TIERS.map(s => <option key={s.id} value={s.id}>{s.name} ({s.mult < 1 ? '−' : '+'}{Math.abs(Math.round((s.mult - 1) * 100))}%)</option>)}
+                className={`w-full px-3 py-1.5 rounded-lg border text-sm bg-white focus:outline-none focus:border-terra-400 ${storeTierId ? 'border-stone-200' : 'border-amber-400'}`}>
+                <option value="">— Choose a store —</option>
+                {STORE_TIERS.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
           </div>
@@ -539,8 +575,29 @@ export default function Home() {
         ))}
       </nav>
 
+      {/* ═══════ GATE — pick a location & store first ═══════ */}
+      {!isReadyForPlan && tab !== 'foods' && tab !== 'map' && (
+        <div className="bg-white rounded-2xl border-2 border-amber-300 p-6 text-center shadow-sm">
+          <div className="text-2xs uppercase tracking-wider text-amber-600 font-semibold mb-2">Pick where you shop</div>
+          <h2 className="font-display text-xl font-bold text-stone-900 mb-2">
+            Tell us your city and store first
+          </h2>
+          <p className="text-sm text-stone-600 max-w-md mx-auto mb-4 leading-relaxed">
+            Prices vary 30%+ between cities and 50%+ between stores in the same city.
+            We can&apos;t give you a meaningful plan without knowing both.
+            Pick {!city && <span className="font-semibold text-amber-700">a location</span>}
+            {!city && !storeTier && ' and '}
+            {!storeTier && <span className="font-semibold text-amber-700">a store</span>} above.
+          </p>
+          <p className="text-xs text-stone-400">
+            Or browse the food database in the <button onClick={() => setTab('foods')} className="underline hover:text-stone-700">All Foods</button> tab,
+            or pick a city visually on the <button onClick={() => setTab('map')} className="underline hover:text-stone-700">City Map</button>.
+          </p>
+        </div>
+      )}
+
       {/* ═══════ MEAL PLAN TAB ═══════ */}
-      {tab === 'plan' && (
+      {tab === 'plan' && isReadyForPlan && (
         <div>
           {!result.feasible && (
             <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-4 text-xs text-red-700">
@@ -680,12 +737,12 @@ export default function Home() {
       )}
 
       {/* ═══════ WEEKLY TAB ═══════ */}
-      {tab === 'weekly' && (
+      {tab === 'weekly' && isReadyForPlan && (
         <ShoppingListView plan={result.plan} city={city} storeTier={storeTier} />
       )}
 
       {/* ═══════ MICRONUTRIENT TAB ═══════ */}
-      {tab === 'micro' && (
+      {tab === 'micro' && isReadyForPlan && (
         <MicronutrientPanel
           nutrientScores={result.nutrientScores}
           relaxed={result.relaxed}
@@ -705,11 +762,15 @@ export default function Home() {
             <UsMap cities={CITIES} selectedId={cityId} onSelect={setCityId} />
           </div>
 
-          <div className="flex gap-2 flex-wrap mb-4">
-            <Stat label={city.name} value={city.costIndex} sub="cost index (100=avg)" warn={city.costIndex > 115} accent={city.costIndex < 100} />
-            <Stat label="Monthly Grocery" value={`$${city.monthlyGrocery}`} sub="avg household" accent />
-            <Stat label="Your Plan" value={`$${(result.totals.cost * 30).toFixed(0)}`} sub="/month optimized" />
-          </div>
+          {city ? (
+            <div className="flex gap-2 flex-wrap mb-4">
+              <Stat label={city.name} value={city.costIndex} sub="cost index (100=avg)" warn={city.costIndex > 115} accent={city.costIndex < 100} />
+              <Stat label="Monthly Grocery" value={`$${city.monthlyGrocery}`} sub="avg household" accent />
+              {isReadyForPlan && <Stat label="Your Plan" value={`$${(result.totals.cost * 30).toFixed(0)}`} sub="/month optimized" />}
+            </div>
+          ) : (
+            <div className="text-xs text-stone-400 italic mb-4">Pick a city above or below to see its details.</div>
+          )}
 
           <div className="bg-white rounded-2xl border border-stone-200 p-4">
             <h3 className="font-display text-base font-bold mb-3">All Cities — Cheapest to Most Expensive</h3>
@@ -735,7 +796,7 @@ export default function Home() {
       )}
 
       {/* ═══════ HORMONES TAB ═══════ */}
-      {tab === 'hormones' && (
+      {tab === 'hormones' && isReadyForPlan && (
         <div>
           <div className="bg-white rounded-2xl border border-stone-200 p-4 mb-4">
             <h2 className="font-display text-lg font-bold mb-3">
@@ -1128,10 +1189,14 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
   const [catFilter, setCat]   = useState('all');
   const [sort, setSort]       = useState({ col: 'pd', dir: 'desc' });
 
+  // Without a chosen city, fall back to US national average so the foods
+  // table is still browsable as a reference. The price column header
+  // labels which is in effect.
+  const region = city?.region || 'us';
   const rows = useMemo(() => {
     const costMult = effectiveCostIndex / 100;
     const enriched = FOODS.map(f => {
-      const price = (f.price[city.region] ?? f.price.us) * costMult;
+      const price = (f.price[region] ?? f.price.us) * costMult;
       const pd = +(f.p / Math.max(0.01, price)).toFixed(1);
       return { ...f, _price: +price.toFixed(2), _pd: pd, _antiox: antioxScore(f), _dii: antiInflammScore(f) };
     });
@@ -1140,7 +1205,7 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
       if (filter && !f.name.toLowerCase().includes(filter.toLowerCase())) return false;
       return true;
     });
-  }, [city.region, effectiveCostIndex, filter, catFilter]);
+  }, [region, effectiveCostIndex, filter, catFilter]);
 
   const getters = {
     name:  f => f.name.toLowerCase(),
@@ -1201,7 +1266,7 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
             <th className="py-2 px-1 text-left text-2xs uppercase tracking-wider text-stone-400 font-medium">Unit</th>
             <SortHeader id="p"     sort={sort} setSort={setSort}>Prot</SortHeader>
             <SortHeader id="cal"   sort={sort} setSort={setSort}>Cal</SortHeader>
-            <SortHeader id="price" sort={sort} setSort={setSort}>Cost ({city.region.toUpperCase()})</SortHeader>
+            <SortHeader id="price" sort={sort} setSort={setSort}>Cost ({region.toUpperCase()})</SortHeader>
             <SortHeader id="pd"    sort={sort} setSort={setSort}>P/$</SortHeader>
             <SortHeader id="fib"    sort={sort} setSort={setSort}>Fiber</SortHeader>
             <SortHeader id="micro"  sort={sort} setSort={setSort}>Micro</SortHeader>

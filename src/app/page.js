@@ -3,12 +3,13 @@
 import { useState, useMemo, useCallback, useEffect, Fragment } from 'react';
 import { FOODS, CATEGORIES, REGIONS } from '../data/foods';
 import { CITIES, CITY_MAP } from '../data/cities';
-import { MACRO_PRESETS, ACTIVITY_LEVELS, MAX_SERVINGS, STORE_TIERS, antioxScore } from '../lib/constants';
+import { MACRO_PRESETS, ACTIVITY_LEVELS, MAX_SERVINGS, STORE_TIERS, antioxScore, antiInflammScore } from '../lib/constants';
 import { calcTDEE, calcTargets } from '../lib/tdee';
 import { useOptimizer } from '../lib/useOptimizer';
 import { usePersistentState, setSerialize, setDeserialize, mapSerialize, mapDeserialize } from '../lib/usePersistentState';
 import { loadProfiles, saveProfiles, captureSnapshot, makeProfileId, PROFILE_FIELDS } from '../lib/profiles';
 import { buildShoppingList } from '../lib/weeklyPlan';
+import { fetchLivePricesBatch, isUsingProxy } from '../lib/livePrices';
 
 import UsMap from '../components/UsMap';
 import MealPlanTable from '../components/MealPlanTable';
@@ -18,14 +19,79 @@ import { SortHeader, applySort } from '../components/SortHeader';
 
 // ─── small display components ────────────────────────────────────────────────
 
-function Stat({ label, value, sub, warn, accent }) {
-  const color = warn ? 'text-red-600' : accent ? 'text-terra-600' : 'text-stone-900';
+function Stat({ label, value, sub, warn, accent, hover, editable, onEdit, unit, overridden }) {
+  const color = warn ? 'text-red-600' : overridden ? 'text-purple-600' : accent ? 'text-terra-600' : 'text-stone-900';
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [showHover, setShowHover] = useState(false);
+
+  const startEdit = () => {
+    if (!editable) return;
+    setDraft(typeof value === 'string' ? value.replace(/[^0-9.]/g, '') : String(value));
+    setEditing(true);
+  };
+  const commit = () => {
+    setEditing(false);
+    const n = parseFloat(draft);
+    if (Number.isFinite(n)) onEdit?.(n);
+    else if (draft === '') onEdit?.(null); // clear override
+  };
+
   return (
-    <div className="bg-white rounded-xl p-3 border border-stone-200 flex-1 min-w-[90px]">
-      <div className="text-2xs uppercase tracking-wider text-stone-400 font-medium mb-1">{label}</div>
-      <div className={`text-lg font-bold font-mono ${color}`}>{value}</div>
+    <div
+      className={`relative bg-white rounded-xl p-3 border ${overridden ? 'border-purple-300' : 'border-stone-200'} flex-1 min-w-[90px] ${editable ? 'cursor-text' : ''}`}
+      onMouseEnter={() => setShowHover(true)}
+      onMouseLeave={() => setShowHover(false)}
+      onClick={() => !editing && startEdit()}
+    >
+      <div className="flex items-baseline justify-between mb-1">
+        <span className="text-2xs uppercase tracking-wider text-stone-400 font-medium">{label}</span>
+        {overridden && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onEdit?.(null); }}
+            className="text-[9px] text-purple-400 hover:text-purple-600"
+            title="Reset to calculated value"
+          >reset</button>
+        )}
+      </div>
+      {editing ? (
+        <input
+          type="number"
+          autoFocus
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
+          className={`w-full text-lg font-bold font-mono bg-transparent border-b border-purple-400 outline-none ${color}`}
+        />
+      ) : (
+        <div className={`text-lg font-bold font-mono ${color}`}>{value}{unit && <span className="text-sm font-normal text-stone-400 ml-0.5">{unit}</span>}</div>
+      )}
       {sub && <div className="text-2xs text-stone-400 mt-0.5">{sub}</div>}
+      {hover && showHover && !editing && (
+        <div className="absolute z-30 left-0 top-full mt-1 w-[220px] bg-white border border-stone-200 rounded-lg shadow-lg p-2 text-xs text-stone-700 cursor-default" onClick={(e) => e.stopPropagation()}>
+          {hover}
+        </div>
+      )}
     </div>
+  );
+}
+
+// Hover-content factory for "top contributors" of a single nutrient.
+function ContribHover({ contributors = [], unit = '', label }) {
+  if (!contributors.length) return <span className="italic text-stone-400">No plan item supplies meaningful {label}.</span>;
+  return (
+    <>
+      <span className="block text-2xs uppercase tracking-wider text-stone-400 font-semibold mb-1">Top sources / day</span>
+      <span className="grid grid-cols-[1fr_auto] gap-x-2 gap-y-0.5">
+        {contributors.slice(0, 5).map(c => (
+          <span key={c.id} className="contents">
+            <span className="truncate">{c.servings}× {c.name}</span>
+            <span className="font-mono text-sage-700 text-right">{c.amount}{unit}</span>
+          </span>
+        ))}
+      </span>
+    </>
   );
 }
 
@@ -43,13 +109,24 @@ export default function Home() {
   const [presetId, setPresetId] = usePersistentState('ne.presetId', 'maingain');
   const [storeTierId, setStoreTierId] = usePersistentState('ne.storeTierId', 'mainstream');
 
-  // plan controls (excluded + locks persisted; tab + profile-visibility ephemeral)
+  // plan controls (excluded + locks + pins persisted; tab + profile-visibility ephemeral)
   const [excluded, setExcluded] = usePersistentState('ne.excluded', new Set(), {
     serialize: setSerialize, deserialize: setDeserialize,
   });
   const [locks, setLocks]       = usePersistentState('ne.locks', new Map(), {
     serialize: mapSerialize, deserialize: mapDeserialize,
   });
+  const [pins, setPins]         = usePersistentState('ne.pins', new Set(), {
+    serialize: setSerialize, deserialize: setDeserialize,
+  });
+  // Target overrides — user can type custom values that take precedence
+  // over the calculated TDEE-driven targets. `null` for a field means "use
+  // the calculated value". Persisted so they survive refresh.
+  const [targetOverrides, setTargetOverrides] = usePersistentState('ne.targetOverrides', {});
+  // Optimization mode: 'cost' (default) minimizes $ subject to nutrient
+  // constraints; 'nutrients' weights the nutrient-deficit penalty 5× higher
+  // so the solver pays more for distance from the optimum.
+  const [mode, setMode]         = usePersistentState('ne.mode', 'cost');
   const [tab, setTab]           = useState('plan');
   const [showProfile, setShowProfile] = useState(true);
 
@@ -104,8 +181,23 @@ export default function Home() {
   const storeTier = STORE_TIERS.find(s => s.id === storeTierId) || STORE_TIERS[3];
   const effectiveCostIndex = Math.round(city.costIndex * storeTier.mult);
   const totalHeightIn = heightFt * 12 + heightIn;
-  const tdee    = calcTDEE(gender, weightLbs, totalHeightIn, age, activity);
-  const targets = calcTargets(tdee, preset, weightLbs, gender);
+  const calculatedTdee = calcTDEE(gender, weightLbs, totalHeightIn, age, activity);
+  const tdee = targetOverrides.tdee ?? calculatedTdee;
+  const baseTargets = calcTargets(tdee, preset, weightLbs, gender);
+  // User overrides take precedence over the calculated targets.
+  const targets = {
+    ...baseTargets,
+    ...Object.fromEntries(Object.entries(targetOverrides).filter(([k, v]) => v != null && k !== 'tdee')),
+  };
+
+  const setOverride = useCallback((field, val) => {
+    setTargetOverrides(prev => {
+      const next = { ...prev };
+      if (val == null) delete next[field];
+      else next[field] = val;
+      return next;
+    });
+  }, [setTargetOverrides]);
 
   const availableFoods = useMemo(
     () => FOODS.filter(f => !excluded.has(f.id)),
@@ -120,6 +212,8 @@ export default function Home() {
     costIndex: effectiveCostIndex,
     gender,
     locks,
+    pins,
+    mode,
   });
 
   // ─── callbacks ────────────────────────────────────────────────────────
@@ -155,10 +249,37 @@ export default function Home() {
     });
   }, []);
 
+  const togglePin = useCallback((id) => {
+    setPins(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else              next.add(id);
+      return next;
+    });
+    // Pinning a food un-excludes it (otherwise the LP can't include it).
+    setExcluded(prev => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, [setPins, setExcluded]);
+
+  const unpin = useCallback((id) => {
+    setPins(prev => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, [setPins]);
+
   const clearAll = useCallback(() => {
     setExcluded(new Set());
     setLocks(new Map());
-  }, []);
+    setPins(new Set());
+    setTargetOverrides({});
+  }, [setExcluded, setLocks, setPins, setTargetOverrides]);
 
   const tabs = [
     { id: 'plan',     label: 'Meal Plan' },
@@ -268,17 +389,46 @@ export default function Home() {
             </div>
           </div>
           <div className="flex gap-2 flex-wrap">
-            <Stat label="TDEE" value={tdee} sub="maintenance kcal" />
-            <Stat label="Target Cals" value={targets.calories} sub={`${preset.calAdj > 0 ? '+' : ''}${preset.calAdj}% ${preset.calAdj > 0 ? 'surplus' : preset.calAdj < 0 ? 'deficit' : 'maint'}`} accent />
-            <Stat label="Protein" value={`${targets.protein}g`} sub="1g/lb BW" />
-            <Stat label="Fiber" value={`${targets.fiber}g`} sub="14g/1000kcal" />
+            <Stat label="TDEE" value={tdee} sub="maintenance kcal"
+              editable onEdit={(v) => setOverride('tdee', v)}
+              overridden={targetOverrides.tdee != null} />
+            <Stat label="Target Cals" value={targets.calories} sub={targetOverrides.calories != null ? 'custom' : `${preset.calAdj > 0 ? '+' : ''}${preset.calAdj}% ${preset.calAdj > 0 ? 'surplus' : preset.calAdj < 0 ? 'deficit' : 'maint'}`} accent
+              editable onEdit={(v) => setOverride('calories', v)}
+              overridden={targetOverrides.calories != null} />
+            <Stat label="Protein" value={`${targets.protein}g`} sub={targetOverrides.protein != null ? 'custom' : '1g/lb BW'}
+              editable onEdit={(v) => setOverride('protein', v)}
+              overridden={targetOverrides.protein != null} />
+            <Stat label="Fiber" value={`${targets.fiber}g`} sub={targetOverrides.fiber != null ? 'custom' : '14g/1000kcal'}
+              editable onEdit={(v) => setOverride('fiber', v)}
+              overridden={targetOverrides.fiber != null} />
+            <Stat label="Max Sat Fat" value={`${targets.maxSatFat}g`} sub={targetOverrides.maxSatFat != null ? 'custom' : '10% of cal'}
+              editable onEdit={(v) => setOverride('maxSatFat', v)}
+              overridden={targetOverrides.maxSatFat != null} />
+            <Stat label="Max Chol" value={`${targets.maxChol}mg`} sub={targetOverrides.maxChol != null ? 'custom' : 'DGA 2020'}
+              editable onEdit={(v) => setOverride('maxChol', v)}
+              overridden={targetOverrides.maxChol != null} />
           </div>
+          <div className="text-2xs text-stone-400 mt-2">Click any value above to override. Purple = custom; click "reset" to clear.</div>
         </section>
       )}
 
       {/* macro strategy */}
       <section className="mb-4">
-        <div className="text-2xs uppercase tracking-wider text-stone-400 font-medium mb-2">Caloric Strategy</div>
+        <div className="flex items-baseline justify-between mb-2">
+          <span className="text-2xs uppercase tracking-wider text-stone-400 font-medium">Caloric Strategy</span>
+          <div className="inline-flex bg-stone-100 rounded-lg p-0.5 text-2xs">
+            <button
+              onClick={() => setMode('cost')}
+              className={`px-2 py-1 rounded-md font-semibold transition ${mode === 'cost' ? 'bg-white text-terra-600 shadow-sm' : 'text-stone-500'}`}
+              title="Find the cheapest plan that hits the floors. Default."
+            >$ minimize cost</button>
+            <button
+              onClick={() => setMode('nutrients')}
+              className={`px-2 py-1 rounded-md font-semibold transition ${mode === 'nutrients' ? 'bg-white text-sage-700 shadow-sm' : 'text-stone-500'}`}
+              title="Pay more food cost to push each micronutrient toward its optimum (5× deficit penalty)."
+            >★ optimize nutrients</button>
+          </div>
+        </div>
         <div className="flex gap-1.5 flex-wrap">
           {Object.values(MACRO_PRESETS).map(p => (
             <button key={p.id} onClick={() => setPresetId(p.id)}
@@ -321,18 +471,34 @@ export default function Home() {
           <div className="flex gap-2 flex-wrap mb-3">
             <Stat label="Daily Cost" value={`$${result.totals.cost}`} sub={`$${(result.totals.cost * 30).toFixed(0)}/mo in ${city.name}`} accent />
             <Stat label="Protein" value={`${result.totals.protein}g`} sub={`target ${targets.protein}g`}
-              warn={result.totals.protein < targets.protein * 0.9} />
+              warn={result.totals.protein < targets.protein * 0.9}
+              hover={<ContribHover contributors={result.contributorsByNutrient?.p?.map?.(c => ({...c, amount: `${c.amount}g`})) || []} unit="" label="protein" />} />
             <Stat label="Calories" value={result.totals.calories} sub={`target ${targets.calories}`} />
             <Stat label="Fiber" value={`${result.totals.fiber}g`} sub={`target ${targets.fiber}g`} />
           </div>
 
           <div className="flex gap-2 flex-wrap mb-4">
             <Stat label="Sat Fat" value={`${result.totals.satFat}g`} sub={`max ${targets.maxSatFat}g`}
-              warn={result.totals.satFat > targets.maxSatFat} />
-            <Stat label="Cholesterol" value={`${result.totals.chol}mg`} sub="max 300mg"
-              warn={result.totals.chol > 300} />
-            <Stat label="Added Sugar" value={`${result.totals.sugar}g`} sub="minimized" />
+              warn={result.totals.satFat > targets.maxSatFat}
+              hover={<ContribHover contributors={result.contributorsByNutrient?.sf || []} unit="g" label="saturated fat" />} />
+            <Stat label="Cholesterol" value={`${result.totals.chol}mg`} sub={`max ${targets.maxChol}mg`}
+              warn={result.totals.chol > targets.maxChol}
+              hover={<ContribHover contributors={result.contributorsByNutrient?.chol || []} unit="mg" label="cholesterol" />} />
+            <Stat label="Added Sugar" value={`${result.totals.sugar}g`} sub={`max ${targets.maxSugar}g`}
+              warn={result.totals.sugar > targets.maxSugar}
+              hover={<ContribHover contributors={result.contributorsByNutrient?.sug || []} unit="g" label="added sugar" />} />
             <Stat label="Prot/Dollar" value={`${(result.totals.protein / Math.max(0.01, result.totals.cost)).toFixed(1)}g`} sub="efficiency" />
+            <Stat
+              label="Inflam Score"
+              value={(() => {
+                const totalServ = result.plan.reduce((s, f) => s + f.servings, 0) || 1;
+                const weighted = result.plan.reduce((s, f) => s + antiInflammScore(f) * f.servings, 0) / totalServ;
+                return (weighted > 0 ? '+' : '') + weighted.toFixed(1);
+              })()}
+              sub="DII (neg = anti)"
+              warn={false}
+              accent={result.plan.reduce((s, f) => s + antiInflammScore(f) * f.servings, 0) / Math.max(1, result.plan.reduce((s, f) => s + f.servings, 0)) < -2}
+            />
           </div>
 
           <MealPlanTable
@@ -345,7 +511,9 @@ export default function Home() {
             onExclude={toggleExclude}
           />
 
-          {(excluded.size > 0 || locks.size > 0) && (
+          <LivePricesPanel plan={result.plan} city={city} />
+
+          {(excluded.size > 0 || locks.size > 0 || pins.size > 0) && (
             <div className="bg-white rounded-2xl border border-stone-200 p-4 mb-4">
               <div className="text-sm font-semibold mb-2 flex items-center justify-between">
                 <span>Your Overrides</span>
@@ -360,6 +528,21 @@ export default function Home() {
                       return f ? (
                         <button key={id} onClick={() => unlockQty(id)} className="pill pill-inactive text-xs">
                           <span className="font-mono">{q}×</span> {f.name} <span className="text-stone-400 ml-1">unlock</span>
+                        </button>
+                      ) : null;
+                    })}
+                  </div>
+                </div>
+              )}
+              {pins.size > 0 && (
+                <div className="mb-2">
+                  <div className="text-2xs uppercase tracking-wider text-purple-600 font-semibold mb-1">📌 Pinned foods (forced into plan)</div>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {[...pins].map(id => {
+                      const f = FOODS.find(x => x.id === id);
+                      return f ? (
+                        <button key={id} onClick={() => unpin(id)} className="pill pill-inactive text-xs">
+                          {f.name} <span className="text-stone-400 ml-1">unpin</span>
                         </button>
                       ) : null;
                     })}
@@ -418,7 +601,14 @@ export default function Home() {
 
       {/* ═══════ MICRONUTRIENT TAB ═══════ */}
       {tab === 'micro' && (
-        <MicronutrientPanel nutrientScores={result.nutrientScores} relaxed={result.relaxed} />
+        <MicronutrientPanel
+          nutrientScores={result.nutrientScores}
+          relaxed={result.relaxed}
+          allFoods={FOODS}
+          planIds={new Set(result.plan.map(f => f.id))}
+          pins={pins}
+          onPin={togglePin}
+        />
       )}
 
       {/* ═══════ CITY MAP TAB ═══════ */}
@@ -474,6 +664,9 @@ export default function Home() {
                 plan={result.plan}
                 totals={result.totals}
                 contributorsByNutrient={result.contributorsByNutrient}
+                allFoods={FOODS}
+                pins={pins}
+                onPin={togglePin}
               />
             ))}
           </div>
@@ -500,6 +693,9 @@ export default function Home() {
           excluded={excluded}
           setExcluded={setExcluded}
           toggleExclude={toggleExclude}
+          pins={pins}
+          togglePin={togglePin}
+          planIds={new Set(result.plan.map(f => f.id))}
         />
       )}
 
@@ -549,24 +745,37 @@ function getHormoneGoals(gender) {
 // substring against the FOODS list since there's no `dim` numeric column.
 const CRUCIFEROUS = /broccoli|cabbage|kale|cauliflower|brussels|bok choy|collard|arugula/i;
 
-function HormoneRow({ goal, plan, totals, contributorsByNutrient }) {
+function HormoneRow({ goal, plan, totals, contributorsByNutrient, allFoods = [], pins = new Set(), onPin }) {
   const [expanded, setExpanded] = useState(false);
+  const planIds = useMemo(() => new Set(plan.map(f => f.id)), [plan]);
 
   // Build the contributors list from the plan based on the goal's binding.
   let sources = [];
   let totalAmount = 0;
+  let suggestions = [];
   if (goal.dimByCat) {
     sources = plan
       .filter(f => CRUCIFEROUS.test(f.name))
       .map(f => ({ id: f.id, name: f.name, servings: f.servings, amount: f.servings }))
       .sort((a, b) => b.amount - a.amount);
     totalAmount = sources.reduce((s, x) => s + x.amount, 0);
+    suggestions = expanded
+      ? allFoods.filter(f => CRUCIFEROUS.test(f.name) && !planIds.has(f.id)).slice(0, 5)
+      : [];
   } else {
     sources = plan
       .map(f => ({ id: f.id, name: f.name, servings: f.servings, amount: +(((f[goal.field] || 0) * f.servings).toFixed(2)) }))
       .filter(x => x.amount >= goal.threshold)
       .sort((a, b) => b.amount - a.amount);
     totalAmount = +(plan.reduce((s, f) => s + (f[goal.field] || 0) * f.servings, 0).toFixed(1));
+    suggestions = expanded
+      ? allFoods
+          .filter(f => !planIds.has(f.id))
+          .map(f => ({ id: f.id, name: f.name, amount: +(f[goal.field] || 0).toFixed(2) }))
+          .filter(x => x.amount >= goal.threshold)
+          .sort((a, b) => b.amount - a.amount)
+          .slice(0, 5)
+      : [];
   }
 
   const pct       = goal.target > 0 ? totalAmount / goal.target : 0;
@@ -604,7 +813,7 @@ function HormoneRow({ goal, plan, totals, contributorsByNutrient }) {
       {expanded && (
         <div className="mt-2 ml-5 pl-3 border-l-2 border-stone-100">
           {sources.length === 0 ? (
-            <div className="text-xs text-stone-400 italic">
+            <div className="text-xs text-stone-400 italic mb-2">
               No plan items contribute meaningful {goal.nutrient.toLowerCase()}. Try adding {goal.dimByCat
                 ? 'broccoli, cabbage, kale, or cauliflower.'
                 : suggestionsFor(goal.key)}
@@ -622,7 +831,104 @@ function HormoneRow({ goal, plan, totals, contributorsByNutrient }) {
               ))}
             </div>
           )}
+          {suggestions.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-stone-100">
+              <div className="text-2xs uppercase tracking-wider text-stone-400 font-semibold mb-1">Top sources NOT in plan</div>
+              <div className="grid grid-cols-[1fr_auto_auto] gap-x-3 gap-y-1 text-xs">
+                {suggestions.map(s => (
+                  <Fragment key={s.id}>
+                    <span className="text-stone-700">{s.name}</span>
+                    <span className="font-mono text-sage-700 text-right">
+                      {goal.dimByCat ? 'cruciferous' : `${s.amount}${goal.unit === '%DV' ? '%' : goal.unit}/serv`}
+                    </span>
+                    {pins.has(s.id) ? (
+                      <span className="text-2xs text-purple-600 font-mono">📌 pinned</span>
+                    ) : (
+                      <button
+                        onClick={() => onPin?.(s.id)}
+                        className="text-2xs text-sage-700 hover:text-sage-900 font-mono"
+                        title="Add to plan"
+                      >+ add</button>
+                    )}
+                  </Fragment>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
+      )}
+    </div>
+  );
+}
+
+function LivePricesPanel({ plan, city }) {
+  const [state, setState] = useState({ status: 'idle', results: null, error: null });
+
+  const fetchLive = async () => {
+    setState({ status: 'loading', results: null, error: null });
+    try {
+      const map = await fetchLivePricesBatch(plan, city.lat, city.lng);
+      setState({ status: 'done', results: map, error: null });
+    } catch (e) {
+      setState({ status: 'error', results: null, error: e?.message || String(e) });
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-stone-200 p-4 mb-4">
+      <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
+        <div>
+          <h3 className="font-display text-base font-bold flex items-center gap-2">
+            🌍 Live Open Food Facts Prices
+          </h3>
+          <p className="text-2xs text-stone-400">
+            Crowd-sourced. Sparse outside western Europe — treat as informational, not authoritative. {isUsingProxy() ? 'Via Worker proxy.' : 'Direct from prices.openfoodfacts.org.'}
+          </p>
+        </div>
+        <button
+          onClick={fetchLive}
+          disabled={state.status === 'loading'}
+          className="px-3 py-1.5 rounded-lg bg-sage-600 hover:bg-sage-700 text-white text-xs font-semibold disabled:opacity-30 transition"
+        >
+          {state.status === 'loading' ? 'Fetching…' : `Compare near ${city.name}`}
+        </button>
+      </div>
+      {state.status === 'error' && (
+        <div className="text-xs text-red-600 italic">Live fetch failed: {state.error}</div>
+      )}
+      {state.status === 'done' && state.results.size === 0 && (
+        <div className="text-xs text-stone-400 italic">No matching observations near {city.name}. Coverage is best in major US/EU cities.</div>
+      )}
+      {state.status === 'done' && state.results.size > 0 && (
+        <table className="w-full text-xs mt-2">
+          <thead>
+            <tr className="border-b border-stone-200">
+              <th className="text-left py-1 text-2xs uppercase tracking-wider text-stone-400 font-medium">Food</th>
+              <th className="text-right py-1 text-2xs uppercase tracking-wider text-stone-400 font-medium">Baseline</th>
+              <th className="text-right py-1 text-2xs uppercase tracking-wider text-stone-400 font-medium">OFF median</th>
+              <th className="text-right py-1 text-2xs uppercase tracking-wider text-stone-400 font-medium"># obs</th>
+            </tr>
+          </thead>
+          <tbody>
+            {plan.map(f => {
+              const live = state.results.get(f.id);
+              if (!live) return null;
+              const baseline = (f.price[city.region] ?? f.price.us) * (city.costIndex / 100);
+              const liveCcy = live.currency || 'USD';
+              const delta = live.median_price - baseline;
+              return (
+                <tr key={f.id} className="border-b border-stone-50">
+                  <td className="py-1 text-stone-700">{f.name}</td>
+                  <td className="py-1 font-mono text-stone-500 text-right">${baseline.toFixed(2)}</td>
+                  <td className={`py-1 font-mono text-right ${delta > 0 ? 'text-red-600' : 'text-sage-600'}`}>
+                    {liveCcy === 'USD' ? '$' : ''}{live.median_price.toFixed(2)}{liveCcy !== 'USD' ? ` ${liveCcy}` : ''}
+                  </td>
+                  <td className="py-1 font-mono text-stone-400 text-right">{live.n_observations}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       )}
     </div>
   );
@@ -683,9 +989,6 @@ function ShoppingListView({ plan, city, storeTier }) {
         </div>
       ))}
 
-      <div className="bg-stone-50 border border-stone-200 rounded-2xl p-4 text-xs text-stone-600 leading-relaxed">
-        <span className="font-semibold">Why no protein rotation?</span> The LP already minimizes cost subject to your targets. Forcing variety strictly increases the bill — exactly what you don&apos;t want when shopping cheap. Eat the same chicken thighs every day if that&apos;s what wins; your body has weeks of B12/Fe/Ca stores to bridge any micronutrient bumpiness.
-      </div>
     </div>
   );
 }
@@ -735,7 +1038,7 @@ function ProfileSlots({ saved, onLoad, onSave, onDelete }) {
   );
 }
 
-function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclude }) {
+function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclude, pins, togglePin, planIds }) {
   const [filter, setFilter]   = useState('');
   const [catFilter, setCat]   = useState('all');
   const [sort, setSort]       = useState({ col: 'pd', dir: 'desc' });
@@ -745,7 +1048,7 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
     const enriched = FOODS.map(f => {
       const price = (f.price[city.region] ?? f.price.us) * costMult;
       const pd = +(f.p / Math.max(0.01, price)).toFixed(1);
-      return { ...f, _price: +price.toFixed(2), _pd: pd, _antiox: antioxScore(f) };
+      return { ...f, _price: +price.toFixed(2), _pd: pd, _antiox: antioxScore(f), _dii: antiInflammScore(f) };
     });
     return enriched.filter(f => {
       if (catFilter !== 'all' && f.cat !== catFilter) return false;
@@ -764,6 +1067,7 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
     fib:   f => f.fib,
     micro: f => f.micro,
     antiox:f => f._antiox,
+    dii:   f => f._dii,
   };
   const sorted = applySort(rows, sort, getters);
 
@@ -817,6 +1121,7 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
             <SortHeader id="fib"    sort={sort} setSort={setSort}>Fiber</SortHeader>
             <SortHeader id="micro"  sort={sort} setSort={setSort}>Micro</SortHeader>
             <SortHeader id="antiox" sort={sort} setSort={setSort}>Antiox</SortHeader>
+            <SortHeader id="dii"    sort={sort} setSort={setSort}>Inflam</SortHeader>
             <th className="py-2 px-1" />
           </tr>
         </thead>
@@ -839,8 +1144,16 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
                 <td className="py-1.5 px-1 font-mono font-semibold" title="Antioxidant capacity (loosely indexed to ORAC, 0–10)" style={{ color: f._antiox >= 8 ? '#3D6340' : f._antiox >= 5 ? '#B24F1C' : '#918779' }}>
                   {f._antiox}
                 </td>
-                <td className="py-1.5 px-1">
-                  <button onClick={() => toggleExclude(f.id)} className={`text-xs ${isExcl ? 'text-sage-600' : 'text-red-400 hover:text-red-600'}`}>
+                <td className="py-1.5 px-1 font-mono font-semibold" title="Dietary Inflammatory Index — negative = anti-inflammatory, positive = pro-inflammatory" style={{ color: f._dii < -3 ? '#3D6340' : f._dii > 2 ? '#B91C1C' : '#918779' }}>
+                  {f._dii > 0 ? '+' : ''}{f._dii}
+                </td>
+                <td className="py-1.5 px-1 whitespace-nowrap">
+                  {pins?.has(f.id) ? (
+                    <button onClick={() => togglePin?.(f.id)} className="text-xs text-purple-600 hover:text-purple-700" title="Pinned — must appear in plan. Click to unpin.">📌</button>
+                  ) : !planIds?.has(f.id) && !isExcl ? (
+                    <button onClick={() => togglePin?.(f.id)} className="text-xs text-sage-600 hover:text-sage-700" title="Add to plan (pin ≥1 serving)">+ add</button>
+                  ) : null}
+                  <button onClick={() => toggleExclude(f.id)} className={`text-xs ml-1 ${isExcl ? 'text-sage-600' : 'text-red-400 hover:text-red-600'}`}>
                     {isExcl ? '+' : '✕'}
                   </button>
                 </td>

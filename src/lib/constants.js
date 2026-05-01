@@ -137,6 +137,60 @@ export function antioxScore(food) {
 }
 
 /**
+ * Dietary Inflammatory Index — per-food score on a [-10, +10] scale,
+ * negative = anti-inflammatory, positive = pro-inflammatory.
+ *
+ * Loosely derived from Shivappa et al.'s DII (which scores ~45
+ * food-parameter intakes against meta-analyzed inflammatory
+ * cytokine effects). We collapse to a per-food category default plus
+ * keyword overrides for the foods that diverge meaningfully.
+ *
+ * Refs: Shivappa N et al., Public Health Nutr 2014; recent reviews
+ * including https://pmc.ncbi.nlm.nih.gov/articles/PMC11576095/
+ *
+ * Treat as ±2 units accurate. Useful for ranking, not for absolute claims.
+ */
+const ANTIINFL_BY_CAT = {
+  fish:        -4,   // omega-3 dominant
+  vegetables:  -3,
+  fruits:      -3,
+  nuts:        -2,
+  legumes:     -2,
+  fats:         0,
+  grains:       0,
+  eggs:         0,
+  dairy:       +1,
+  poultry:     +1,
+  beef:        +3,
+  supplement:   0,
+};
+
+const ANTIINFL_OVERRIDES = [
+  // strongly anti-inflammatory
+  [/wild salmon|sardine|mackerel|anchov/i,            -8],
+  [/walnut|chia|flax/i,                                -7],   // ALA + lignans
+  [/extra virgin olive oil/i,                          -7],   // oleocanthal, polyphenols
+  [/turmeric|ginger|cinnamon|garlic|oregano/i,        -10],
+  [/blueberr|blackberr|raspberr|cranberr|berr/i,      -7],
+  [/kale|spinach|chard|collard/i,                      -6],
+  [/broccoli|brussels|cauliflower|cabbage/i,           -5],
+  [/dark chocolate|cocoa/i,                            -6],
+  [/green tea|matcha/i,                                -8],
+  // pro-inflammatory leaning
+  [/butter|coconut oil/i,                              +3],   // saturated fat heavy
+  [/ground beef 80\/20|liver/i,                        +2],   // higher sat fat / arachidonic acid
+  [/whey protein|casein/i,                              0],   // neutral
+  [/white rice|white bread/i,                          +2],   // refined carbs
+];
+
+export function antiInflammScore(food) {
+  for (const [pat, score] of ANTIINFL_OVERRIDES) {
+    if (pat.test(food.name)) return score;
+  }
+  return ANTIINFL_BY_CAT[food.cat] ?? 0;
+}
+
+/**
  * STORAGE_NOTES — copy strings the UI uses to explain the storage horizon.
  */
 export const STORAGE_NOTES = {

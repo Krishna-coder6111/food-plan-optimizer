@@ -136,6 +136,31 @@ export default function Home() {
   const [savedProfiles, setSavedProfiles] = useState([]);
   useEffect(() => { setSavedProfiles(loadProfiles()); }, []);
 
+  // SELF-HEAL stuck state from older app versions:
+  // Older builds let the user pin multiple foods, which combined with the
+  // javascript-lp-solver's simplex degeneracy could freeze the page on
+  // first solve. Watch `pins` and trim down to ≤1 — fires on initial
+  // mount AND on every hydration (`usePersistentState` reads localStorage
+  // post-mount and re-emits, which is the case that was getting stuck for
+  // returning users).
+  useEffect(() => {
+    if (pins.size > 1) {
+      setPins(new Set([...pins].slice(0, 1)));
+    }
+  }, [pins, setPins]);
+
+  // Nuclear option: clear every localStorage key the app owns and reload.
+  // Bound to the "Reset my data" button below. Useful when stuck state
+  // (bad pins, conflicting locks, etc.) prevents the app from rendering.
+  const resetAllData = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (!window.confirm('This will erase your saved profile, excluded foods, locks, pins, and target overrides on THIS browser. Continue?')) return;
+    for (const k of Object.keys(window.localStorage)) {
+      if (k.startsWith('ne.')) window.localStorage.removeItem(k);
+    }
+    window.location.reload();
+  }, []);
+
   const profileSetters = {
     gender: setGender, age: setAge, heightFt: setHeightFt, heightIn: setHeightIn,
     weightLbs: setWeightLbs, activity: setActivity, cityId: setCityId,
@@ -344,12 +369,19 @@ export default function Home() {
             <span className="text-2xs text-stone-300">v3</span>
             {pending && <span className="text-2xs text-stone-400 animate-pulse">solving…</span>}
           </div>
-          <button
-            onClick={() => setShowProfile(p => !p)}
-            className="text-xs text-stone-400 hover:text-stone-600 transition"
-          >
-            {showProfile ? 'Hide Profile ▲' : 'Edit Profile ▼'}
-          </button>
+          <div className="flex items-baseline gap-3">
+            <button
+              onClick={resetAllData}
+              className="text-2xs text-stone-300 hover:text-red-500 transition"
+              title="Erase all your saved data on this browser (use this if the app gets stuck)"
+            >Reset</button>
+            <button
+              onClick={() => setShowProfile(p => !p)}
+              className="text-xs text-stone-400 hover:text-stone-600 transition"
+            >
+              {showProfile ? 'Hide Profile ▲' : 'Edit Profile ▼'}
+            </button>
+          </div>
         </div>
         <h1 className="font-display text-2xl sm:text-3xl font-bold text-stone-900 leading-tight tracking-tight">
           Minimum Cost,<br />Maximum Nutrition

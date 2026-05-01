@@ -737,6 +737,7 @@ export default function Home() {
           planIds={new Set(result.plan.map(f => f.id))}
           pins={pins}
           onPin={togglePin}
+          gender={gender}
         />
       )}
 

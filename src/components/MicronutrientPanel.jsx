@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { STORAGE_NOTES } from '../lib/constants';
+import { recommendSupplements } from '../lib/supplements';
 
 /**
  * Micronutrient Optimization — one bar per nutrient showing:
@@ -158,7 +159,7 @@ function Bar({ nutrient, score, allFoods = [], planIds = new Set(), pins = new S
   );
 }
 
-export default function MicronutrientPanel({ nutrientScores, relaxed = [], allFoods = [], planIds = new Set(), pins = new Set(), onPin }) {
+export default function MicronutrientPanel({ nutrientScores, relaxed = [], allFoods = [], planIds = new Set(), pins = new Set(), onPin, gender = 'male' }) {
   if (!nutrientScores) return null;
   const entries = Object.entries(nutrientScores);
 
@@ -196,14 +197,59 @@ export default function MicronutrientPanel({ nutrientScores, relaxed = [], allFo
         </div>
       )}
 
-      <div className="mt-3 pt-3 border-t border-stone-100 text-xs text-stone-600 leading-relaxed">
-        <span className="font-semibold text-stone-700">Closing the gap with supplements.</span>{' '}
-        Hitting every micronutrient at its <em>optimum</em> from food alone is
-        often the most expensive part of the plan. A daily multivitamin
-        (~$0.10/day generic) trivially covers the bottom rows here, so
-        you can let the LP optimize cost on the macros and treat the
-        supplement as your insurance for vit D, B12, K, and trace
-        minerals — especially in winter or on a vegetarian plan.
+      <SupplementRecommender nutrientScores={nutrientScores} gender={gender} />
+    </div>
+  );
+}
+
+function SupplementRecommender({ nutrientScores, gender }) {
+  const rec = recommendSupplements(nutrientScores, { gender });
+
+  // No gaps — celebrate, don't suggest pills you don't need.
+  if (rec.picks.length === 0 && Object.keys(rec.gaps).length === 0) {
+    return (
+      <div className="mt-3 pt-3 border-t border-stone-100 text-xs text-sage-700 leading-relaxed">
+        <span className="font-semibold">No supplement gaps.</span>{' '}
+        Your current plan covers every micronutrient at the floor or above. You don&apos;t need a multivitamin.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 pt-3 border-t border-stone-100">
+      <div className="text-xs text-stone-700 leading-relaxed mb-2">
+        <span className="font-semibold">Close the gap with supplements.</span>{' '}
+        Your plan is short on{' '}
+        <span className="font-mono">{Object.keys(rec.gaps).join(', ')}</span>.
+        Cheapest combo to fill it:
+      </div>
+      {rec.picks.length === 0 ? (
+        <div className="text-xs text-stone-500 italic">No catalog supplement covers your specific gap profile — try re-including excluded foods or switching to nutrients mode.</div>
+      ) : (
+        <ul className="space-y-1.5">
+          {rec.picks.map(p => (
+            <li key={p.id} className="flex items-baseline gap-2 text-xs">
+              <span className="text-sage-600 font-semibold">+</span>
+              <div className="flex-1">
+                <div>
+                  <span className="font-medium text-stone-800">{p.name}</span>
+                  <span className="text-2xs text-stone-400 ml-2">covers {p.fills.map(f => f.nutrient).join(', ')}</span>
+                </div>
+                <div className="text-2xs text-stone-400 italic">{p.note}</div>
+              </div>
+              <span className="font-mono font-semibold text-terra-600">${p.cost.toFixed(2)}/day</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex items-baseline justify-between mt-2 pt-2 border-t border-stone-100 text-xs">
+        <span className="font-semibold text-stone-700">
+          {rec.picks.length === 0 ? 'No combo found' : `Total: $${rec.totalCost.toFixed(2)}/day`}
+          {rec.picks.length > 0 && <span className="text-2xs text-stone-400 ml-2 font-normal">(${(rec.totalCost * 30).toFixed(2)}/month)</span>}
+        </span>
+        {rec.remaining.length > 0 && (
+          <span className="text-2xs text-amber-600">Still short on {rec.remaining.map(r => r.nutrient).join(', ')}</span>
+        )}
       </div>
     </div>
   );

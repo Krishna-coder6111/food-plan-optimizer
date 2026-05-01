@@ -10,7 +10,7 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "pipeline": "cd data/pipeline && python3 build_all.py && python3 emit_overrides.py"
+    "pipeline": "cd data/pipeline && python3 build_all.py && python3 emit_overrides.py && python3 emit_usda_foods.py"
   },
   "dependencies": {
     "d3-geo": "^3.1.1",

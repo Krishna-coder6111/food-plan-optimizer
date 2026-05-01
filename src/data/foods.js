@@ -1,4 +1,5 @@
 import { BLS_OVERRIDES } from './blsOverrides';
+import { USDA_FOODS } from './usdaFoods.generated';
 
 /**
  * NUTRIENT ENGINE — Food Database
@@ -163,10 +164,18 @@ const FOODS_BASE = [
   { id:142,name:'Kefir (plain)',        unit:'1 cup (240g)',cat:'fermented', p:9,  cal:104, f:2,    sf:1.5, mf:0.5, chol:10,  carb:12,  fib:0, sug:0, na:130, k:376, ca:24,fe:0,  vitA:2,  vitC:0,  vitD:25, vitE:0,  vitK:0,  vitB6:5, vitB12:24, folate:5,  zn:5,   mg_:7,  se:9,  omega3:0,    micro:6, price:{us:0.85,ne:0.95,mw:0.80,so:0.75,we:0.90}, hormoneM:['ca','vitD'],            hormoneF:['ca','vitD','b12','probiotics'] },
 ];
 
-// Apply BLS overrides on top of the hand-curated baseline. Each entry in
+// Concatenate the hand-curated baseline with USDA-derived foods (auto-
+// generated from the pipeline; empty by default until `npm run pipeline`
+// runs). Then apply BLS price overrides on top — each entry in
 // BLS_OVERRIDES[id] is a partial price record; the spread merges so that
-// regions absent from the BLS data fall back to the curated values.
-export const FOODS = FOODS_BASE.map(f => {
+// regions absent from the BLS data fall back to the baseline values.
+//
+// Curated entries keep their hormone tags, real serving units, and
+// known prices. USDA entries have inferred categories, 100g servings,
+// and category-baseline prices — coarse but adds hundreds of options
+// to the LP without the user having to hand-edit foods.js.
+const ALL_FOODS = [...FOODS_BASE, ...USDA_FOODS];
+export const FOODS = ALL_FOODS.map(f => {
   const override = BLS_OVERRIDES[f.id];
   if (!override) return f;
   return { ...f, price: { ...f.price, ...override } };

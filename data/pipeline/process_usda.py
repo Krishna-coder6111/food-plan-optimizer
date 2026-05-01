@@ -161,7 +161,7 @@ def to_percent_dv(key, amount):
     return round(amount, 2)
 
 
-def process_usda(dataset_key='foundation'):
+def process_usda(dataset_key='foundation', out_filename=None):
     print(f'Processing USDA {dataset_key} dataset…')
 
     base = download_and_extract(dataset_key)
@@ -188,17 +188,32 @@ def process_usda(dataset_key='foundation'):
         print(f'    capping to {BRANDED_DEFAULT_LIMIT} (USDA_BRANDED_LIMIT to override)')
         foods = foods.sort_values('description').head(BRANDED_DEFAULT_LIMIT)
 
-    # food_nutrient.csv is the big one (~10M rows for SR Legacy)
-    # Load only the columns we care about
-    nutr = pd.read_csv(
+    # food_nutrient.csv is the big one — ~10M rows for SR Legacy and
+    # ~25M for Branded. Loading the whole thing at once OOMs Codespaces
+    # (4 GB RAM) on the branded set.
+    #
+    # Stream in 500K-row chunks and pre-filter to (a) the nutrient IDs we
+    # actually use AND (b) the fdc_ids that survived the food-table cut
+    # above (matters for branded, which we cap to BRANDED_DEFAULT_LIMIT).
+    # Memory peak drops from ~5 GB to ~150 MB.
+    kept_fdc_ids = set(foods['fdc_id'].astype(str))
+    wanted_nids  = set(NUTRIENT_MAP.keys())
+    print(f'  Streaming food_nutrient.csv (filtering to {len(kept_fdc_ids)} foods × {len(wanted_nids)} nutrients)…')
+    chunks = []
+    total_rows = 0
+    for chunk in pd.read_csv(
         nutr_path,
         usecols=['fdc_id', 'nutrient_id', 'amount'],
         dtype={'fdc_id': str, 'nutrient_id': int, 'amount': float},
-    )
-    print(f'  Loaded {len(nutr)} nutrient records')
-
-    # Keep only nutrients we care about
-    nutr = nutr[nutr['nutrient_id'].isin(NUTRIENT_MAP.keys())]
+        chunksize=500_000,
+    ):
+        total_rows += len(chunk)
+        chunks.append(chunk[
+            chunk['nutrient_id'].isin(wanted_nids) &
+            chunk['fdc_id'].isin(kept_fdc_ids)
+        ])
+    nutr = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=['fdc_id','nutrient_id','amount'])
+    print(f'    scanned {total_rows} rows, kept {len(nutr)} relevant')
 
     # Pivot to one row per food, columns = nutrient keys
     pivoted = nutr.pivot_table(
@@ -222,7 +237,7 @@ def process_usda(dataset_key='foundation'):
         records.append(rec)
 
     os.makedirs(OUT_DIR, exist_ok=True)
-    out = os.path.join(OUT_DIR, 'usda_foods.json')
+    out = os.path.join(OUT_DIR, out_filename or 'usda_foods.json')
     with open(out, 'w') as f:
         json.dump(records, f, indent=2)
     print(f'  Wrote {len(records)} foods → {out}')

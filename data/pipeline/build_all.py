@@ -39,25 +39,15 @@ if __name__ == '__main__':
     print('\n[2/3] USDA FoodData Central — primary dataset')
     print('-' * 40)
     dataset = os.environ.get('USDA_DATASET', 'foundation')
-    process_usda(dataset)
+    process_usda(dataset, out_filename='usda_foods.json')
 
     if os.environ.get('USDA_INCLUDE_BRANDED'):
         print('\n[3/3] USDA FoodData Central — branded foods')
         print('-' * 40)
-        # Branded writes to a separate JSON so the foundation file isn't
-        # clobbered. emit_usda_foods.py picks both up.
-        import json
-        from process_usda import process_usda as run
-        # Tweak output path by monkey-patching env var; cheaper than a
-        # full refactor. process_usda always writes to usda_foods.json so
-        # we rename after.
-        run('branded')
-        os.rename(
-            os.path.join(HERE, '..', 'processed', 'usda_foods.json'),
-            os.path.join(HERE, '..', 'processed', 'branded_foods.json'),
-        )
-        # Re-run primary so usda_foods.json exists too
-        run(dataset)
+        # Writes to a separate file so usda_foods.json from step 2 is
+        # untouched. emit_usda_foods.py picks both up. If branded is
+        # interrupted (Ctrl+C/Z, OOM), the foundation set still works.
+        process_usda('branded', out_filename='branded_foods.json')
 
     print('\n' + '=' * 60)
     print('Done. Run `python emit_overrides.py && python emit_usda_foods.py`')

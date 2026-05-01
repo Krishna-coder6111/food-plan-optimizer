@@ -141,11 +141,18 @@ def main():
             added += 1
         print(f'  + merged {added} branded foods (dedupe vs Foundation by name)')
 
-    # Skip USDA records with vanishingly small calorie or protein counts —
-    # those are usually water, gum, condiments. They confuse the LP.
+    # Skip USDA records with literally-zero calories — those are pure
+    # water, salt, etc. Allow low-calorie items like turmeric (9 kcal/tsp),
+    # garlic (4 kcal/clove), ginger (5 kcal/tbsp) — they have meaningful
+    # antiox + DII contributions even at tiny calorie counts.
     foods = []
     for rec in usda:
-        if (rec.get('cal', 0) or 0) < 5: continue
+        cal = rec.get('cal', 0) or 0
+        # Keep low-cal items only if they have at least SOME nutrient
+        # signal (vitC, fiber, omega-3, or any %DV). Pure-water rows still drop.
+        if cal < 1:
+            sig = sum((rec.get(k, 0) or 0) for k in ('vitC','vitA','fib','omega3','fe','ca','zn','mg_'))
+            if sig < 5: continue
         cat = infer_cat(rec['description'])
         base_price = CAT_PRICE_PER_100G.get(cat, DEFAULT_PRICE)
         price = { region: round(base_price * mult, 3) for region, mult in REGION_MULT.items() }

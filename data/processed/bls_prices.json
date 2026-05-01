@@ -1,0 +1,483 @@
+[
+  {
+    "item": "Flour, white, all purpose, per lb. (453.6 gm)",
+    "item_code": "701111",
+    "us": 0.549,
+    "so": 0.498
+  },
+  {
+    "item": "Rice, white, long grain, uncooked, per lb. (453.6 gm)",
+    "item_code": "701312",
+    "us": 1.06,
+    "so": 1.119
+  },
+  {
+    "item": "Spaghetti and macaroni, per lb. (453.6 gm)",
+    "item_code": "701322",
+    "us": 1.308,
+    "so": 1.237
+  },
+  {
+    "item": "Bread, white, pan, per lb. (453.6 gm)",
+    "item_code": "702111",
+    "us": 1.808,
+    "ne": 1.726,
+    "mw": 1.665,
+    "so": 1.744,
+    "we": 2.136
+  },
+  {
+    "item": "Bread, whole wheat, pan, per lb. (453.6 gm)",
+    "item_code": "702212",
+    "us": 2.747
+  },
+  {
+    "item": "Cookies, chocolate chip, per lb. (453.6 gm)",
+    "item_code": "702421",
+    "us": 5.309,
+    "so": 5.015,
+    "we": 6.777
+  },
+  {
+    "item": "Ground chuck, 100% beef, per lb. (453.6 gm)",
+    "item_code": "703111",
+    "us": 6.684,
+    "so": 6.848
+  },
+  {
+    "item": "Ground beef, 100% beef, per lb. (453.6 gm)",
+    "item_code": "703112",
+    "us": 6.701,
+    "ne": 6.394,
+    "mw": 6.912,
+    "so": 6.403,
+    "we": 7.182
+  },
+  {
+    "item": "Ground beef, lean and extra lean, per lb. (453.6 gm)",
+    "item_code": "703113",
+    "us": 8.2,
+    "so": 8.111
+  },
+  {
+    "item": "Chuck roast, USDA Choice, boneless, per lb. (453.6 gm)",
+    "item_code": "703213",
+    "us": 8.833,
+    "ne": 9.79,
+    "mw": 9.156,
+    "so": 8.455,
+    "we": 8.706
+  },
+  {
+    "item": "Round roast, USDA Choice, boneless, per lb. (453.6 gm)",
+    "item_code": "703311",
+    "us": 8.477,
+    "mw": 8.199,
+    "so": 8.469
+  },
+  {
+    "item": "Beef for stew, boneless, per lb. (453.6 gm)",
+    "item_code": "703432",
+    "us": 8.413,
+    "so": 8.312
+  },
+  {
+    "item": "Steak, round, USDA Choice, boneless, per lb. (453.6 gm)",
+    "item_code": "703511",
+    "us": 9.61,
+    "so": 9.92
+  },
+  {
+    "item": "Steak, round, graded and ungraded, excluding USDA Prime and Choice, per lb. (453.6 gm)",
+    "item_code": "703512",
+    "us": 9.188,
+    "so": 9.373
+  },
+  {
+    "item": "Steak, sirloin, USDA Choice, boneless, per lb. (453.6 gm)",
+    "item_code": "703613",
+    "us": 14.124,
+    "mw": 13.284,
+    "so": 13.724,
+    "we": 16.625
+  },
+  {
+    "item": "Bacon, sliced, per lb. (453.6 gm)",
+    "item_code": "704111",
+    "us": 6.801,
+    "ne": 7.891,
+    "mw": 6.863,
+    "so": 6.286,
+    "we": 6.685
+  },
+  {
+    "item": "Chops, center cut, bone-in, per lb. (453.6 gm)",
+    "item_code": "704211",
+    "us": 4.571,
+    "so": 4.256
+  },
+  {
+    "item": "Chops, boneless, per lb. (453.6 gm)",
+    "item_code": "704212",
+    "us": 4.484,
+    "ne": 4.031,
+    "mw": 4.869,
+    "so": 4.484,
+    "we": 4.564
+  },
+  {
+    "item": "Ham, boneless, excluding canned, per lb. (453.6 gm)",
+    "item_code": "704312",
+    "us": 5.479,
+    "ne": 4.819,
+    "mw": 5.891,
+    "so": 5.535,
+    "we": 5.467
+  },
+  {
+    "item": "Chicken, fresh, whole, per lb. (453.6 gm)",
+    "item_code": "706111",
+    "us": 2.033,
+    "ne": 2.087,
+    "mw": 2.19,
+    "so": 1.894,
+    "we": 2.115
+  },
+  {
+    "item": "Chicken legs, bone-in, per lb. (453.6 gm)",
+    "item_code": "706212",
+    "us": 1.739,
+    "so": 1.699,
+    "we": 1.736
+  },
+  {
+    "item": "Eggs, grade A, large, per doz.",
+    "item_code": "708111",
+    "us": 2.348,
+    "so": 2.299
+  },
+  {
+    "item": "Milk, fresh, whole, fortified, per gal. (3.8 lit)",
+    "item_code": "709112",
+    "us": 4.067,
+    "so": 4.06,
+    "we": 4.287
+  },
+  {
+    "item": "American processed cheese, per lb. (453.6 gm)",
+    "item_code": "710211",
+    "us": 4.783,
+    "so": 4.291
+  },
+  {
+    "item": "Cheddar cheese, natural, per lb. (453.6 gm)",
+    "item_code": "710212",
+    "us": 5.97,
+    "so": 5.573,
+    "we": 6.836
+  },
+  {
+    "item": "Ice cream, prepackaged, bulk, regular, per 1/2 gal. (1.9 lit)",
+    "item_code": "710411",
+    "us": 6.191,
+    "so": 5.716,
+    "we": 7.024
+  },
+  {
+    "item": "Bananas, per lb. (453.6 gm)",
+    "item_code": "711211",
+    "us": 0.657,
+    "ne": 0.671,
+    "mw": 0.632,
+    "so": 0.617,
+    "we": 0.741
+  },
+  {
+    "item": "Oranges, Navel, per lb. (453.6 gm)",
+    "item_code": "711311",
+    "us": 1.483,
+    "ne": 1.613,
+    "mw": 1.555,
+    "so": 1.431,
+    "we": 1.406
+  },
+  {
+    "item": "Grapefruit, per lb. (453.6 gm)",
+    "item_code": "711411",
+    "us": 1.568,
+    "so": 1.378
+  },
+  {
+    "item": "Lemons, per lb. (453.6 gm)",
+    "item_code": "711412",
+    "us": 2.003,
+    "mw": 1.948,
+    "so": 2.264,
+    "we": 1.834
+  },
+  {
+    "item": "Strawberries, dry pint, per 12 oz. (340.2 gm)",
+    "item_code": "711415",
+    "us": 2.582,
+    "so": 2.562
+  },
+  {
+    "item": "Potatoes, white, per lb. (453.6 gm)",
+    "item_code": "712112",
+    "us": 0.847,
+    "ne": 0.897,
+    "mw": 0.733,
+    "so": 0.916
+  },
+  {
+    "item": "Lettuce, iceberg, per lb. (453.6 gm)",
+    "item_code": "712211",
+    "us": 1.719
+  },
+  {
+    "item": "Tomatoes, field grown, per lb. (453.6 gm)",
+    "item_code": "712311",
+    "us": 2.255,
+    "ne": 2.819,
+    "mw": 2.025,
+    "so": 1.992
+  },
+  {
+    "item": "Orange juice, frozen concentrate, 12 oz. can, per 16 oz. (473.2 ml)",
+    "item_code": "713111",
+    "us": 4.886
+  },
+  {
+    "item": "Corn, canned, any style, all sizes, per lb. (453.6 gm)",
+    "item_code": "714221",
+    "us": 1.311
+  },
+  {
+    "item": "Beans, dried, any type, all sizes, per lb. (453.6 gm)",
+    "item_code": "714233",
+    "us": 1.696,
+    "so": 1.754,
+    "we": 1.469
+  },
+  {
+    "item": "Sugar, white, all sizes, per lb. (453.6 gm)",
+    "item_code": "715211",
+    "us": 0.996,
+    "so": 1.117,
+    "we": 0.95
+  },
+  {
+    "item": "Coffee, 100%, ground roast, all sizes, per lb. (453.6 gm)",
+    "item_code": "717311",
+    "us": 9.608
+  },
+  {
+    "item": "Potato chips, per 16 oz.",
+    "item_code": "718311",
+    "us": 6.712,
+    "ne": 7.488,
+    "mw": 6.12,
+    "so": 7.013,
+    "we": 6.064
+  },
+  {
+    "item": "Malt beverages, all types, all sizes, any origin, per 16 oz. (473.2 ml)",
+    "item_code": "720111",
+    "us": 1.852,
+    "ne": 1.875,
+    "mw": 1.787,
+    "so": 1.763,
+    "we": 2.092
+  },
+  {
+    "item": "Wine, red and white table, all sizes, any origin, per 1 liter (33.8 oz)",
+    "item_code": "720311",
+    "us": 14.236,
+    "ne": 15.36,
+    "mw": 13.044,
+    "so": 12.867,
+    "we": 15.879
+  },
+  {
+    "item": "Fuel oil #2 per gallon (3.785 liters)",
+    "item_code": "72511",
+    "us": 5.045,
+    "ne": 5.122,
+    "mw": 4.022,
+    "so": 4.243,
+    "we": 5.726
+  },
+  {
+    "item": "Electricity per KWH",
+    "item_code": "72610",
+    "us": 0.19,
+    "ne": 0.253,
+    "mw": 0.177,
+    "so": 0.164,
+    "we": 0.224
+  },
+  {
+    "item": "Utility (piped) gas per therm",
+    "item_code": "72620",
+    "us": 1.688,
+    "ne": 1.906,
+    "mw": 1.291,
+    "so": 2.096,
+    "we": 1.784
+  },
+  {
+    "item": "Gasoline, unleaded regular, per gallon/3.785 liters",
+    "item_code": "74714",
+    "us": 3.843,
+    "ne": 3.635,
+    "mw": 3.459,
+    "so": 3.455,
+    "we": 4.923
+  },
+  {
+    "item": "Gasoline, unleaded midgrade, per gallon/3.785 liters",
+    "item_code": "74715",
+    "us": 4.308,
+    "ne": 4.128,
+    "mw": 3.927,
+    "so": 3.922,
+    "we": 5.181
+  },
+  {
+    "item": "Gasoline, unleaded premium, per gallon/3.785 liters",
+    "item_code": "74716",
+    "us": 4.757,
+    "ne": 4.515,
+    "mw": 4.425,
+    "so": 4.294,
+    "we": 5.404
+  },
+  {
+    "item": "Automotive diesel fuel, per gallon/3.785 liters",
+    "item_code": "74717",
+    "us": 4.919,
+    "ne": 4.844,
+    "mw": 4.497,
+    "so": 4.619,
+    "we": 5.531
+  },
+  {
+    "item": "Gasoline, all types, per gallon/3.785 liters",
+    "item_code": "7471A",
+    "us": 3.988,
+    "ne": 3.779,
+    "mw": 3.558,
+    "so": 3.576,
+    "we": 5.029
+  },
+  {
+    "item": "All uncooked ground beef, per lb. (453.6 gm)",
+    "item_code": "FC1101",
+    "us": 6.863,
+    "ne": 6.638,
+    "mw": 7.046,
+    "so": 6.998,
+    "we": 6.674
+  },
+  {
+    "item": "All Uncooked Beef Roasts, per lb. (453.6 gm)",
+    "item_code": "FC2101",
+    "us": 8.857,
+    "ne": 9.43,
+    "mw": 9.232,
+    "so": 8.451
+  },
+  {
+    "item": "All Uncooked Beef Steaks, per lb. (453.6 gm)",
+    "item_code": "FC3101",
+    "us": 12.732,
+    "ne": 11.72,
+    "mw": 13.68,
+    "so": 12.616,
+    "we": 13.046
+  },
+  {
+    "item": "All Uncooked Other Beef (Excluding Veal), per lb. (453.6 gm)",
+    "item_code": "FC4101",
+    "us": 7.675,
+    "ne": 8.457,
+    "mw": 7.821,
+    "so": 7.831,
+    "we": 7.113
+  },
+  {
+    "item": "All Ham (Excluding Canned Ham and Luncheon Slices), per lb. (453.6 gm)",
+    "item_code": "FD2101",
+    "us": 4.439,
+    "ne": 3.856,
+    "mw": 4.659,
+    "so": 4.46,
+    "we": 4.715
+  },
+  {
+    "item": "All Pork Chops, per lb. (453.6 gm)",
+    "item_code": "FD3101",
+    "us": 4.181,
+    "ne": 4.207,
+    "mw": 4.732,
+    "so": 4.044,
+    "we": 4.048
+  },
+  {
+    "item": "All Other Pork (Excluding Canned Ham and Luncheon Slices), per lb. (453.6 gm)",
+    "item_code": "FD4101",
+    "us": 3.628,
+    "ne": 3.752,
+    "mw": 3.683,
+    "so": 3.491,
+    "we": 3.729
+  },
+  {
+    "item": "Chicken breast, boneless, per lb. (453.6 gm)",
+    "item_code": "FF1101",
+    "us": 4.172,
+    "ne": 4.002,
+    "mw": 4.067,
+    "so": 3.918,
+    "we": 4.706
+  },
+  {
+    "item": "Milk, fresh, low-fat, reduced fat, skim, per gal. (3.8 lit)",
+    "item_code": "FJ1101",
+    "us": 3.404,
+    "we": 3.45
+  },
+  {
+    "item": "Yogurt, per 8 oz. (226.8 gm)",
+    "item_code": "FJ4101",
+    "us": 1.56,
+    "so": 1.571
+  },
+  {
+    "item": "Lettuce, romaine, per lb. (453.6 gm)",
+    "item_code": "FL2101",
+    "us": 3.607,
+    "ne": 3.199,
+    "so": 3.71,
+    "we": 4.083
+  },
+  {
+    "item": "All soft drinks, per 2 liters (67.6 oz)",
+    "item_code": "FN1101",
+    "us": 2.204,
+    "so": 1.995
+  },
+  {
+    "item": "All soft drinks, 12 pk, 12 oz., cans, per 12 oz. (354.9 ml)",
+    "item_code": "FN1102",
+    "us": 0.603,
+    "mw": 0.574,
+    "so": 0.587,
+    "we": 0.652
+  },
+  {
+    "item": "Butter, stick, per lb. (453.6 gm)",
+    "item_code": "FS1101",
+    "us": 4.258
+  }
+]

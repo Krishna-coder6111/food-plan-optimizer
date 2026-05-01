@@ -12,7 +12,7 @@ compatibility_date = "2026-01-01"
 # `wrangler dev`; otherwise it reuses the production one.
 [[kv_namespaces]]
 binding = "PRICE_CACHE"
-id = "REPLACE_WITH_NAMESPACE_ID"
+id = "92048f3a39b94a8ca14fb3373e1bcc7c"
 
 # CORS — set to the origin that calls this Worker.
 # Use '*' for testing; lock it down before going to prod.

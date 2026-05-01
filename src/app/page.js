@@ -37,19 +37,34 @@ function Stat({ label, value, sub, warn, accent, hover, editable, onEdit, unit, 
     else if (draft === '') onEdit?.(null); // clear override
   };
 
+  // Visible affordance for editable tiles: dashed border (vs solid for
+  // read-only), subtle "pencil" indicator that shows on hover, and a
+  // "click to edit" tooltip via title attr. Without this the tiles look
+  // identical to read-only stats and you don't know they're interactive.
+  const editableShell = editable && !editing
+    ? 'border-dashed border-stone-300 hover:border-purple-400 hover:bg-purple-50/30 hover:shadow-sm'
+    : '';
+  const tooltip = editable && !editing && !overridden ? 'Click to set a custom value' : undefined;
+
   return (
     <div
-      className={`relative bg-white rounded-xl p-3 border ${overridden ? 'border-purple-300' : 'border-stone-200'} flex-1 min-w-[90px] ${editable ? 'cursor-text' : ''}`}
+      title={tooltip}
+      className={`relative bg-white rounded-xl p-3 border ${overridden ? 'border-purple-400 border-solid bg-purple-50/40' : 'border-stone-200'} ${editableShell} transition flex-1 min-w-[90px] ${editable ? 'cursor-pointer' : ''}`}
       onMouseEnter={() => setShowHover(true)}
       onMouseLeave={() => setShowHover(false)}
       onClick={() => !editing && startEdit()}
     >
-      <div className="flex items-baseline justify-between mb-1">
-        <span className="text-2xs uppercase tracking-wider text-stone-400 font-medium">{label}</span>
+      <div className="flex items-baseline justify-between mb-1 gap-2">
+        <span className="text-2xs uppercase tracking-wider text-stone-400 font-medium flex items-center gap-1">
+          {label}
+          {editable && !editing && !overridden && (
+            <span className="text-[9px] text-stone-300 group-hover:text-purple-400" aria-hidden>✎</span>
+          )}
+        </span>
         {overridden && (
           <button
             onClick={(e) => { e.stopPropagation(); onEdit?.(null); }}
-            className="text-[9px] text-purple-400 hover:text-purple-600"
+            className="text-[9px] text-purple-500 hover:text-purple-700 font-semibold"
             title="Reset to calculated value"
           >reset</button>
         )}
@@ -62,7 +77,7 @@ function Stat({ label, value, sub, warn, accent, hover, editable, onEdit, unit, 
           onChange={e => setDraft(e.target.value)}
           onBlur={commit}
           onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
-          className={`w-full text-lg font-bold font-mono bg-transparent border-b border-purple-400 outline-none ${color}`}
+          className={`w-full text-lg font-bold font-mono bg-transparent border-b-2 border-purple-500 outline-none ${color}`}
         />
       ) : (
         <div className={`text-lg font-bold font-mono ${color}`}>{value}{unit && <span className="text-sm font-normal text-stone-400 ml-0.5">{unit}</span>}</div>
@@ -912,13 +927,13 @@ function HormoneRow({ goal, plan, totals, contributorsByNutrient, allFoods = [],
                       {goal.dimByCat ? 'cruciferous' : `${s.amount}${goal.unit === '%DV' ? '%' : goal.unit}/serv`}
                     </span>
                     {pins.has(s.id) ? (
-                      <span className="text-2xs text-purple-600 font-mono">📌 pinned</span>
+                      <span className="text-2xs text-purple-600 font-mono">in plan</span>
                     ) : (
                       <button
                         onClick={() => onPin?.(s.id)}
-                        className="text-2xs text-sage-700 hover:text-sage-900 font-mono"
-                        title="Add to plan"
-                      >+ add</button>
+                        className="text-2xs text-sage-700 hover:text-sage-900 font-mono px-1.5 py-0.5 rounded hover:bg-sage-50 border border-sage-200"
+                        title="Add this food to the plan. To keep it forced into every plan, use the 📌 pin button on the Meal Plan tab."
+                      >+ Add to plan</button>
                     )}
                   </Fragment>
                 ))}
@@ -1219,12 +1234,18 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
                 </td>
                 <td className="py-1.5 px-1 whitespace-nowrap">
                   {pins?.has(f.id) ? (
-                    <button onClick={() => togglePin?.(f.id)} className="text-xs text-purple-600 hover:text-purple-700" title="Pinned — must appear in plan. Click to unpin.">📌</button>
+                    <span className="text-2xs font-mono text-purple-600">in plan</span>
                   ) : !planIds?.has(f.id) && !isExcl ? (
-                    <button onClick={() => togglePin?.(f.id)} className="text-xs text-sage-600 hover:text-sage-700" title="Add to plan (pin ≥1 serving)">+ add</button>
+                    <button
+                      onClick={() => togglePin?.(f.id)}
+                      className="text-2xs text-sage-700 hover:text-sage-900 font-mono px-1.5 py-0.5 rounded hover:bg-sage-50 border border-sage-200"
+                      title="Add this food to the plan. To keep it forced into every plan, use the 📌 pin button on the Meal Plan tab."
+                    >+ Add to plan</button>
+                  ) : planIds?.has(f.id) ? (
+                    <span className="text-2xs font-mono text-stone-400">in plan</span>
                   ) : null}
-                  <button onClick={() => toggleExclude(f.id)} className={`text-xs ml-1 ${isExcl ? 'text-sage-600' : 'text-red-400 hover:text-red-600'}`}>
-                    {isExcl ? '+' : '✕'}
+                  <button onClick={() => toggleExclude(f.id)} className={`text-sm ml-2 ${isExcl ? 'text-sage-600' : 'text-red-400 hover:text-red-600'}`} title={isExcl ? 'Re-include' : 'Exclude this food from the plan'}>
+                    {isExcl ? '+' : '×'}
                   </button>
                 </td>
               </tr>

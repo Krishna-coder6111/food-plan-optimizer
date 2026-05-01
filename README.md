@@ -280,11 +280,20 @@ env var, the SDK no-ops and the app uses baseline prices.
 - [x] BLS pipeline → foods.js loader
 - [x] Cloudflare Worker (OFF Prices public + FatSecret OAuth2 + Kroger OAuth2)
 - [x] Direct OFF Prices fallback when Worker isn't deployed
-- [ ] Worker deployed + UI wired to live prices
+- [x] Worker deployed (set `NEXT_PUBLIC_PRICES_API` to wire it in)
+- [ ] **Auto-recommend supplements that fill the deficient-micros gap** —
+      score each plan against NUTRIENT_OPTIMA and surface "this plan is
+      short on Vit D and Mg — adding a $0.10/day generic multi covers it"
+      with an explicit cost/benefit comparison vs. adding more food.
+- [ ] **Worldwide expansion via Open Food Facts Prices** — for any country
+      with >N observations per metro (currently most of FR/DE/IT/ES,
+      growing in UK/IN/US), drop the BLS dependency and run the LP off
+      the live OFF data. Requires a country-aware city/region picker
+      and an FX layer.
 - [ ] Per-store filtering (Kroger locationId; OFF `osm_*` mapping)
-- [ ] Background pre-warming via Worker Cron Trigger
+- [ ] Solver in a terminable Web Worker (fix multi-pin freeze properly)
+- [ ] Background pre-warming of OFF Prices via Worker Cron Trigger
 - [ ] PWA support (offline, installable)
-- [ ] International expansion (India, UK) once OFF Prices coverage warrants
 
 ## Contributing
 

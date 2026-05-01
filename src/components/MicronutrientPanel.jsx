@@ -139,13 +139,13 @@ function Bar({ nutrient, score, allFoods = [], planIds = new Set(), pins = new S
                     <span>{s.name}</span>
                     <span className="font-mono text-sage-700 text-right">{Math.round(s.amount)}%/serv</span>
                     {pins.has(s.id) ? (
-                      <span className="text-2xs text-purple-600 font-mono">📌 pinned</span>
+                      <span className="text-2xs text-purple-600 font-mono">in plan</span>
                     ) : (
                       <button
                         onClick={() => onPin?.(s.id)}
-                        className="text-2xs text-sage-700 hover:text-sage-900 font-mono"
-                        title="Add to plan (pin ≥1 serving)"
-                      >+ add</button>
+                        className="text-2xs text-sage-700 hover:text-sage-900 font-mono px-1.5 py-0.5 rounded hover:bg-sage-50 border border-sage-200"
+                        title="Add this food to the plan. Use the 📌 pin button on the Meal Plan tab to keep it there permanently."
+                      >+ Add to plan</button>
                     )}
                   </div>
                 ))}
@@ -195,6 +195,16 @@ export default function MicronutrientPanel({ nutrientScores, relaxed = [], allFo
           Consider re-including excluded foods, or add a supplement.
         </div>
       )}
+
+      <div className="mt-3 pt-3 border-t border-stone-100 text-xs text-stone-600 leading-relaxed">
+        <span className="font-semibold text-stone-700">Closing the gap with supplements.</span>{' '}
+        Hitting every micronutrient at its <em>optimum</em> from food alone is
+        often the most expensive part of the plan. A daily multivitamin
+        (~$0.10/day generic) trivially covers the bottom rows here, so
+        you can let the LP optimize cost on the macros and treat the
+        supplement as your insurance for vit D, B12, K, and trace
+        minerals — especially in winter or on a vegetarian plan.
+      </div>
     </div>
   );
 }

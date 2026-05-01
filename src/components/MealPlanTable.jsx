@@ -117,8 +117,15 @@ export default function MealPlanTable({ plan, totals, targets, locks, pins = new
             const lockedQty = locks?.get(f.id);
             const isPinned = pins?.has?.(f.id);
             const isNew = newlyAdded?.has?.(f.id);
+            // Pinned row gets a clear purple band on the left + tinted bg
+            // so the user can tell at a glance which item is forced into
+            // every solve. The fade-in for newly-added rows takes
+            // precedence visually for ~1s.
+            const rowClass = isNew
+              ? 'bg-sage-100/60'
+              : isPinned ? 'bg-purple-50/60 border-l-4 border-l-purple-500' : '';
             return (
-              <tr key={f.id} className={`border-b border-stone-100 hover:bg-stone-50/50 transition-colors duration-1000 ${isNew ? 'bg-sage-100/60' : ''}`}>
+              <tr key={f.id} className={`border-b border-stone-100 hover:bg-stone-50/50 transition-colors duration-1000 ${rowClass}`}>
                 <td className="py-2 px-1">
                   <span
                     className="w-2 h-2 rounded-full inline-block"
@@ -127,7 +134,10 @@ export default function MealPlanTable({ plan, totals, targets, locks, pins = new
                   />
                 </td>
                 <td className="py-2 px-1">
-                  <div className="font-medium text-stone-800">{f.name}</div>
+                  <div className="font-medium text-stone-800 flex items-center gap-1.5">
+                    {f.name}
+                    {isPinned && <span className="text-[9px] font-mono uppercase tracking-wider text-purple-600 bg-purple-100 px-1.5 py-0.5 rounded">PINNED</span>}
+                  </div>
                   <div className="text-2xs text-stone-400">{f.unit}</div>
                 </td>
                 <td className="py-2 px-1">

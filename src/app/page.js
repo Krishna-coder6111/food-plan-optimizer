@@ -175,6 +175,10 @@ export default function Home() {
   // OFF by default — they're cheap & processed and otherwise dominate a
   // cost-minimized plan. Toggled in the Food Sources controls.
   const [includeBranded, setIncludeBranded] = usePersistentState('ne.includeBranded', false);
+  // Plan horizon (days). The optimizer solves ONE basket for this many days
+  // (see optimizer.js). Lifted here so the Plan, Shopping and Compare views
+  // all share it — no more "daily plan ×7".
+  const [days, setDays] = usePersistentState('ne.days', 7);
   // Health conditions — multi-select. Each selected condition adjusts
   // targets (e.g. hypertension caps sodium at 1500mg) and biases the
   // supplement recommender toward condition-relevant SKUs.
@@ -308,6 +312,7 @@ export default function Home() {
     locks,
     pins,
     mode,
+    days,
   });
 
   // Diff plan ids to flag newly-added rows. Skip the very first solve
@@ -585,6 +590,17 @@ export default function Home() {
             </label>
           )}
         </div>
+        <div className="mb-2 flex items-center gap-2 flex-wrap">
+          <span className="text-2xs uppercase tracking-wider text-stone-400 font-medium">Plan for</span>
+          <div className="inline-flex bg-stone-100 rounded-lg p-0.5 text-2xs">
+            {[{ d: 1, l: '1 day' }, { d: 7, l: '1 week' }, { d: 14, l: '2 weeks' }, { d: 30, l: '1 month' }].map(o => (
+              <button key={o.d} type="button" onClick={() => setDays(o.d)}
+                className={`px-2 py-1 rounded-md font-semibold transition ${days === o.d ? 'bg-white text-terra-600 shadow-sm' : 'text-stone-500'}`}>
+                {o.l}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="flex gap-1.5 flex-wrap">
           {Object.values(MACRO_PRESETS).map(p => (
             <button key={p.id} onClick={() => setPresetId(p.id)}
@@ -644,6 +660,12 @@ export default function Home() {
               ⚠ Could not meet all nutrient targets with current constraints.
               Some floors were relaxed: {result.relaxed.join(', ') || '(none)'}.
               Try re-including excluded foods or switching macro strategy.
+            </div>
+          )}
+
+          {days > 1 && (
+            <div className="bg-sage-50 border border-sage-200 rounded-xl px-4 py-2 mb-3 text-xs text-sage-800">
+              🛒 Optimized as a single <b>{days}-day</b> basket — quantities below are totals to buy for {days} days; nutrition stats are per-day averages.
             </div>
           )}
 
@@ -778,7 +800,7 @@ export default function Home() {
 
       {/* ═══════ WEEKLY TAB ═══════ */}
       {tab === 'weekly' && isReadyForPlan && (
-        <ShoppingListView plan={result.plan} city={city} storeTier={storeTier} />
+        <ShoppingListView plan={result.plan} city={city} storeTier={storeTier} days={days} setDays={setDays} />
       )}
 
       {/* ═══════ MICRONUTRIENT TAB ═══════ */}
@@ -1121,9 +1143,11 @@ function LivePricesPanel({ plan, city }) {
   );
 }
 
-function ShoppingListView({ plan, city, storeTier }) {
-  const [days, setDays] = useState(7);
-  const list = useMemo(() => buildShoppingList(plan, days), [plan, days]);
+function ShoppingListView({ plan, city, storeTier, days, setDays }) {
+  // `plan` is already the optimized {days}-day basket (period quantities),
+  // so we group it as-is (multiplier 1) and derive the per-day figure.
+  const list = useMemo(() => buildShoppingList(plan, 1), [plan]);
+  const perDayCost = +(list.totalWeekly / Math.max(1, days)).toFixed(2);
 
   return (
     <div>
@@ -1141,11 +1165,11 @@ function ShoppingListView({ plan, city, storeTier }) {
               />
             </label>
             <span className="text-terra-600 font-bold">${list.totalWeekly}</span>
-            <span className="text-stone-400">total · ${list.totalDaily}/day</span>
+            <span className="text-stone-400">total ({days}d) · ${perDayCost}/day</span>
           </div>
         </div>
         <p className="text-xs text-stone-400 mb-1">
-          Same daily plan × {days} days, grouped by store section. The optimizer already picked the cheapest combo that hits your targets — eating the same thing every day is what minimizes cost.
+          Optimized as a single <b>{days}-day</b> basket (not a daily plan ×{days}), grouped by store section. Solving the whole period at once lets the optimizer add small amounts of nutrient-dense foods that would round to zero in a one-day plan.
         </p>
         <p className="text-2xs text-stone-400">
           Prices reflect <span className="font-mono">{city.name}</span> at <span className="font-mono">{storeTier.name}</span> ({storeTier.mult < 1 ? '−' : '+'}{Math.abs(Math.round((storeTier.mult - 1) * 100))}% vs national avg).
@@ -1285,7 +1309,7 @@ function ComparePricesPanel({ plan, days }) {
     let sum = 0, found = 0;
     for (const r of rows) {
       const it = r.byLoc.get(id);
-      if (it && it.price > 0) { sum += it.price * r.food.servings * days; found++; }
+      if (it && it.price > 0) { sum += it.price * r.food.servings; found++; }
     }
     return { id, weekly: sum, hits: found };
   });
@@ -1401,7 +1425,7 @@ function ComparePricesPanel({ plan, days }) {
                   <tr key={r.food.id} className="border-b border-stone-50">
                     <td className="py-1.5 px-1 text-stone-700">
                       <span className="font-medium">{r.food.name}</span>
-                      <span className="text-2xs text-stone-400 ml-1">×{r.food.servings * days}</span>
+                      <span className="text-2xs text-stone-400 ml-1">×{r.food.servings}</span>
                     </td>
                     {picked.map(id => {
                       const it = r.byLoc.get(id);

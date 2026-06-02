@@ -54,6 +54,7 @@ function bioavail(food, nutrient) {
  * @param {Object} [opts]
  * @param {Map<number,number>} [opts.locks]    foodId -> forced serving count
  * @param {Set<number>}        [opts.pins]     foodId -> must be in plan (≥1 serving)
+ * @param {number}             [opts.days=1]   optimize one basket across N days
  *
  * @returns {{
  *   plan: Array,
@@ -66,7 +67,14 @@ function bioavail(food, nutrient) {
  * }}
  */
 export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {}) {
-  const { locks = new Map(), pins = new Set(), mode = 'cost' } = opts;
+  const { locks = new Map(), pins = new Set(), mode = 'cost', days: daysOpt = 1 } = opts;
+  // Horizon: optimize ONE basket across `days` days (default 1, fully
+  // backward-compatible). Every target, ceiling, diversity rule and per-food
+  // cap scales by `days`, so the LP can buy small TOTAL amounts of nutrient-
+  // dense foods that would round to zero in a single-day plan. Plan servings
+  // come out as PERIOD quantities; the reported totals/scores are per-day
+  // averages (period ÷ days) so the per-day DRI ranges still apply.
+  const days = Math.max(1, Math.round(daysOpt));
   const costMult = costIndex / 100;
   const regionKey = region || 'us';
 
@@ -88,6 +96,15 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
   const isNutrientsMode = mode === 'nutrients';
   const modeMult = isNutrientsMode ? 3 : 1;
 
+  // Floor to fall back to when relaxing an infeasible nutrient. In
+  // 'nutrients' mode the floor starts at `opt`; relax it only as far as the
+  // DRI `min`, never below — otherwise the hardest-to-hit nutrients (vitD,
+  // ca, …) get dropped to 0 and land BELOW where cost mode (floor = min)
+  // would leave them, making "optimize nutrients" produce WORSE micros than
+  // "minimize cost". In cost mode the floor is already `min`, so 0 is the
+  // only remaining relaxation.
+  const relaxFloor = (n) => (isNutrientsMode ? (NUTRIENT_OPTIMA[n]?.min ?? 0) : 0);
+
   const buildModel = (floorOverrides = {}) => {
     const model = {
       optimize: 'cost',
@@ -100,15 +117,15 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
     // ─── Macronutrient bounds ─────────────────────────────────────────
     // Cholesterol uses targets.maxChol (default 300 mg) so the user's
     // editable target box can tighten it. Sat fat ceiling likewise.
-    model.constraints.protein_min = { min: targets.protein };
-    model.constraints.protein_max = { max: Math.round(targets.protein * 1.15) };
-    model.constraints.cal_min     = { min: Math.round(targets.calories * 0.93) };
-    model.constraints.cal_max     = { max: Math.round(targets.calories * 1.07) };
-    model.constraints.satfat_max  = { max: targets.maxSatFat };
-    model.constraints.chol_max    = { max: targets.maxChol ?? 300 };
-    model.constraints.sugar_max   = { max: targets.maxSugar };
-    model.constraints.fiber_min   = { min: Math.max(30, targets.fiber) };
-    model.constraints.sodium_max  = { max: targets.maxSodium ?? 2300 };
+    model.constraints.protein_min = { min: targets.protein * days };
+    model.constraints.protein_max = { max: Math.round(targets.protein * 1.15 * days) };
+    model.constraints.cal_min     = { min: Math.round(targets.calories * 0.93 * days) };
+    model.constraints.cal_max     = { max: Math.round(targets.calories * 1.07 * days) };
+    model.constraints.satfat_max  = { max: targets.maxSatFat * days };
+    model.constraints.chol_max    = { max: (targets.maxChol ?? 300) * days };
+    model.constraints.sugar_max   = { max: targets.maxSugar * days };
+    model.constraints.fiber_min   = { min: Math.max(30, targets.fiber) * days };
+    model.constraints.sodium_max  = { max: (targets.maxSodium ?? 2300) * days };
 
     // ─── Micronutrient ranges with soft deviation slacks ──────────────
     //
@@ -129,19 +146,19 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
       // The relaxation cascade can still drop it via floorOverrides if
       // infeasible.
       const baseFloor = isNutrientsMode ? range.opt : range.min;
-      const floor = floorOverrides[nutrient] ?? baseFloor;
+      const floor = (floorOverrides[nutrient] ?? baseFloor) * days;
       model.constraints[`n_${nutrient}_min`] = { min: floor };
       if (range.max > 0) {
-        model.constraints[`n_${nutrient}_max`] = { max: range.max };
+        model.constraints[`n_${nutrient}_max`] = { max: range.max * days };
       }
-      // slack-balance constraint:  Σ(food_N · x) - d + e = opt
-      model.constraints[`n_${nutrient}_tgt`] = { equal: range.opt };
+      // slack-balance constraint:  Σ(food_N · x) - d + e = opt × days
+      model.constraints[`n_${nutrient}_tgt`] = { equal: range.opt * days };
     }
 
     // ─── Diversity / dietary-pattern constraints ──────────────────────
-    model.constraints.veg_min     = { min: 2 };
-    model.constraints.fruit_min   = { min: 1 };
-    model.constraints.legume_or_grain_min = { min: 1 };
+    model.constraints.veg_min     = { min: 2 * days };
+    model.constraints.fruit_min   = { min: 1 * days };
+    model.constraints.legume_or_grain_min = { min: 1 * days };
 
     // ─── Food variables ───────────────────────────────────────────────
     for (const food of foods) {
@@ -185,12 +202,12 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
 
       // per-food serving cap
       v[`cap_${varName}`] = 1;
-      model.constraints[`cap_${varName}`] = { max: maxS };
+      model.constraints[`cap_${varName}`] = { max: maxS * days };
 
       // locked servings (quantity-adjust UI) → pin upper & lower
       if (locks.has(food.id)) {
         const q = locks.get(food.id);
-        model.constraints[`lock_${varName}`] = { equal: q };
+        model.constraints[`lock_${varName}`] = { equal: q * days };
         v[`lock_${varName}`] = 1;
       }
 
@@ -271,24 +288,24 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
     const sumChol = pinned.reduce((s, f) => s + (f.chol || 0), 0);
     const sumSat  = pinned.reduce((s, f) => s + (f.sf   || 0), 0);
     const sumNa   = pinned.reduce((s, f) => s + (f.na   || 0), 0);
-    if (sumChol > (targets.maxChol ?? 300)) {
-      baseModel.constraints.chol_max = { max: Math.max(sumChol * 1.2, 400) };
+    if (sumChol > (targets.maxChol ?? 300) * days) {
+      baseModel.constraints.chol_max = { max: Math.max(sumChol * 1.2, 400 * days) };
       maxesRelaxed.push('cholesterol');
     }
-    if (sumSat > targets.maxSatFat) {
-      baseModel.constraints.satfat_max = { max: Math.max(sumSat * 1.2, targets.maxSatFat * 1.5) };
+    if (sumSat > targets.maxSatFat * days) {
+      baseModel.constraints.satfat_max = { max: Math.max(sumSat * 1.2, targets.maxSatFat * 1.5 * days) };
       maxesRelaxed.push('saturated fat');
     }
-    if (sumNa > 2300) {
-      baseModel.constraints.sodium_max = { max: Math.max(sumNa * 1.2, 3500) };
+    if (sumNa > 2300 * days) {
+      baseModel.constraints.sodium_max = { max: Math.max(sumNa * 1.2, 3500 * days) };
       maxesRelaxed.push('sodium');
     }
     // Per-nutrient %DV: any pin pushing >cap → bump cap to 2× pin sum
     for (const [n, range] of Object.entries(NUTRIENT_OPTIMA)) {
       if (range.max <= 0) continue;
       const sum = pinned.reduce((s, f) => s + (f[n] || 0), 0);
-      if (sum > range.max) {
-        baseModel.constraints[`n_${n}_max`] = { max: Math.round(sum * 2) };
+      if (sum > range.max * days) {
+        baseModel.constraints[`n_${n}_max`] = { max: Math.max(Math.round(sum * 2), range.max * days) };
         maxesRelaxed.push(`${n} ceiling`);
       }
     }
@@ -303,8 +320,8 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
   for (const nutrient of relaxOrder) {
     if (result.feasible) break;
     if (past()) { timedOut = true; break; }
-    const overrides = Object.fromEntries(relaxed.map(n => [n, 0]));
-    overrides[nutrient] = 0;
+    const overrides = Object.fromEntries(relaxed.map(n => [n, relaxFloor(n)]));
+    overrides[nutrient] = relaxFloor(nutrient);
     model = buildModel(overrides);
     // Re-apply the pin-driven ceiling overrides from the proactive pass
     if (maxesRelaxed.length > 0) {
@@ -323,8 +340,8 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
 
   // Calorie window relax
   if (!result.feasible && !past()) {
-    model.constraints.cal_min = { min: Math.round(targets.calories * 0.85) };
-    model.constraints.cal_max = { max: Math.round(targets.calories * 1.15) };
+    model.constraints.cal_min = { min: Math.round(targets.calories * 0.85 * days) };
+    model.constraints.cal_max = { max: Math.round(targets.calories * 1.15 * days) };
     result = solver.Solve(model);
   }
 
@@ -334,7 +351,7 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
   // visible warning that their pins were too tight.
   if ((!result.feasible || past()) && pins.size > 0) {
     pinsRelaxed = true;
-    const overrides = Object.fromEntries(relaxed.map(n => [n, 0]));
+    const overrides = Object.fromEntries(relaxed.map(n => [n, relaxFloor(n)]));
     model = buildModel(overrides);
     // Strip pin constraints from the rebuilt model
     for (const f of foods) {
@@ -356,6 +373,9 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
   }
 
   // ─── Totals ─────────────────────────────────────────────────────────
+  // Sum over the plan = PERIOD totals; normalize to a PER-DAY average so the
+  // targets/nutrient UI (which uses per-day DRI ranges) stays correct. Plan
+  // servings themselves stay as period quantities (what you actually buy).
   const totals = plan.reduce((acc, f) => {
     const s = f.servings;
     for (const k of TOTAL_KEYS) acc[k] += (f[k] || 0) * s;
@@ -364,7 +384,8 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
   }, Object.fromEntries([...TOTAL_KEYS, 'cost'].map(k => [k, 0])));
 
   for (const k of Object.keys(totals)) {
-    totals[k] = k === 'cost' ? +totals[k].toFixed(2) : Math.round(totals[k] * 10) / 10;
+    const perDay = totals[k] / days;
+    totals[k] = k === 'cost' ? +perDay.toFixed(2) : Math.round(perDay * 10) / 10;
   }
 
   // ─── Bioavailable (absorbed) totals ─────────────────────────────────
@@ -376,7 +397,7 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
   const absorbedTotals = Object.fromEntries(Object.keys(NUTRIENT_OPTIMA).map(k => [k, 0]));
   for (const f of plan) {
     for (const n of Object.keys(NUTRIENT_OPTIMA)) {
-      absorbedTotals[n] += (f[n] || 0) * bioavail(f, n) * f.servings;
+      absorbedTotals[n] += (f[n] || 0) * bioavail(f, n) * f.servings / days;
     }
   }
   // Vit-C synergy bonus on non-heme iron (Hallberg 1989 — vit C >75mg can
@@ -398,7 +419,7 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
   for (const nutrient of Object.keys(NUTRIENT_OPTIMA)) {
     const items = [];
     for (const f of plan) {
-      const amt = (f[nutrient] || 0) * f.servings;
+      const amt = (f[nutrient] || 0) * f.servings / days;
       if (amt > 0.5) items.push({ id: f.id, name: f.name, servings: f.servings, amount: +amt.toFixed(1) });
     }
     items.sort((a, b) => b.amount - a.amount);
@@ -410,7 +431,7 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
   for (const key of ['p', 'omega3', 'chol', 'sf', 'sug', 'na']) {
     const items = [];
     for (const f of plan) {
-      const amt = (f[key] || 0) * f.servings;
+      const amt = (f[key] || 0) * f.servings / days;
       if (amt > 0.01) items.push({ id: f.id, name: f.name, servings: f.servings, amount: +amt.toFixed(2) });
     }
     items.sort((a, b) => b.amount - a.amount);
@@ -482,6 +503,7 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
     nutrientScores,
     warnings,
     relaxed,
+    days,
   };
 }
 

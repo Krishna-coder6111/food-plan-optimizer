@@ -37,15 +37,15 @@ describe('optimizeDiet — pins (the bug that broke the site)', () => {
   it('handles a single pin without hanging', () => {
     const start = Date.now();
     const r = optimizeDiet(FOODS, maingainTargets(), 'ne', 110, 'male', {
-      pins: new Set([24]), // Wild Salmon Fillet
+      pins: new Set([32960]), // Chicken breast, skinless (USDA)
     });
     expect(Date.now() - start).toBeLessThan(2000);
     expect(r.feasible).toBe(true);
-    expect(r.plan.some(f => f.id === 24)).toBe(true);
+    expect(r.plan.some(f => f.id === 32960)).toBe(true);
   });
 
   // KNOWN LIMITATION: javascript-lp-solver's simplex hits a degeneracy
-  // cycle on certain 2-pin combinations (e.g. Wild Salmon + Whole Eggs).
+  // cycle on certain 2-pin combinations (two animal-protein foods).
   // Single pin from any UI click is fine — that was the actual bug fix.
   // We don't test multi-pin here because vitest can't interrupt synchronous
   // hangs in the upstream solver. The browser is protected by the
@@ -55,7 +55,7 @@ describe('optimizeDiet — pins (the bug that broke the site)', () => {
 
   it('returns warnings as an array (UI never crashes on .map)', () => {
     const r = optimizeDiet(FOODS, maingainTargets(), 'ne', 110, 'male', {
-      pins: new Set([24]),
+      pins: new Set([32960]),
     });
     expect(Array.isArray(r.warnings)).toBe(true);
   });
@@ -64,10 +64,10 @@ describe('optimizeDiet — pins (the bug that broke the site)', () => {
 describe('optimizeDiet — locks', () => {
   it('respects a quantity lock', () => {
     const r = optimizeDiet(FOODS, maingainTargets(), 'ne', 110, 'male', {
-      locks: new Map([[1, 2]]), // Chicken Breast x 2
+      locks: new Map([[32960, 2]]), // Chicken breast, skinless (USDA) x 2
     });
     expect(r.feasible).toBe(true);
-    const chicken = r.plan.find(f => f.id === 1);
+    const chicken = r.plan.find(f => f.id === 32960);
     expect(chicken).toBeDefined();
     expect(chicken.servings).toBe(2);
   });

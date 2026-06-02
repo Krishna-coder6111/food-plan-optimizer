@@ -165,9 +165,12 @@ export default function Home() {
   // the calculated value". Persisted so they survive refresh.
   const [targetOverrides, setTargetOverrides] = usePersistentState('ne.targetOverrides', {});
   // Optimization mode: 'cost' (default) minimizes $ subject to nutrient
-  // constraints; 'nutrients' weights the nutrient-deficit penalty 5× higher
-  // so the solver pays more for distance from the optimum.
+  // constraints; 'nutrients' raises each micronutrient floor to its optimum
+  // (with a 3× deficit penalty) so the solver pays more to hit the optimum.
   const [mode, setMode]         = usePersistentState('ne.mode', 'cost');
+  // Hide USDA "restaurant"/foodservice rows from the optimizer's candidate
+  // set (off by default). Toggled in the Caloric Strategy section.
+  const [hideRestaurant, setHideRestaurant] = usePersistentState('ne.hideRestaurant', false);
   // Health conditions — multi-select. Each selected condition adjusts
   // targets (e.g. hypertension caps sodium at 1500mg) and biases the
   // supplement recommender toward condition-relevant SKUs.
@@ -271,9 +274,12 @@ export default function Home() {
     });
   }, [setTargetOverrides]);
 
+  // Count of "restaurant"/foodservice rows in the DB (drives the toggle's
+  // visibility + label). Static — FOODS doesn't change at runtime.
+  const restaurantCount = useMemo(() => FOODS.filter(f => /restaurant/i.test(f.name)).length, []);
   const availableFoods = useMemo(
-    () => FOODS.filter(f => !excluded.has(f.id)),
-    [excluded],
+    () => FOODS.filter(f => !excluded.has(f.id) && !(hideRestaurant && /restaurant/i.test(f.name))),
+    [excluded, hideRestaurant],
   );
 
   // Track which foods just appeared in the plan since the last solve so the
@@ -538,10 +544,22 @@ export default function Home() {
             <button
               onClick={() => setMode('nutrients')}
               className={`px-2 py-1 rounded-md font-semibold transition ${mode === 'nutrients' ? 'bg-white text-sage-700 shadow-sm' : 'text-stone-500'}`}
-              title="Pay more food cost to push each micronutrient toward its optimum (5× deficit penalty)."
+              title="Raise every micronutrient floor to its optimum and pay a 3× deficit penalty to push past it."
             >★ optimize nutrients</button>
           </div>
         </div>
+        {restaurantCount > 0 && (
+          <label className="flex items-center gap-1.5 text-2xs text-stone-500 cursor-pointer select-none mb-2">
+            <input
+              type="checkbox"
+              checked={hideRestaurant}
+              onChange={(e) => setHideRestaurant(e.target.checked)}
+              className="accent-terra-600"
+            />
+            Hide restaurant / foodservice items
+            <span className="text-stone-400">({restaurantCount} in database)</span>
+          </label>
+        )}
         <div className="flex gap-1.5 flex-wrap">
           {Object.values(MACRO_PRESETS).map(p => (
             <button key={p.id} onClick={() => setPresetId(p.id)}

@@ -159,13 +159,16 @@ async function offPrices(url, env, ctx) {
   const body = await r.json();
 
   const items  = body.items || [];
-  const valid  = items.filter(p => typeof p.price === 'number' && p.price > 0);
+  // OFF Prices is community-sourced worldwide, so even a US-located query
+  // returns foreign observations. We're a USD app — keep only USD prices,
+  // else the median mixes currencies and the label reads e.g. "3.20 EUR".
+  const valid  = items.filter(p => typeof p.price === 'number' && p.price > 0 && p.currency === 'USD');
   const prices = valid.map(p => p.price).sort((a, b) => a - b);
   const median = prices.length ? prices[Math.floor(prices.length / 2)] : null;
   const result = {
     product:        barcode || product,
     median_price:   median,
-    currency:       valid[0]?.currency || 'USD',
+    currency:       'USD',
     n_observations: prices.length,
     sample:         valid.slice(0, 5).map(p => ({
       price: p.price, currency: p.currency,

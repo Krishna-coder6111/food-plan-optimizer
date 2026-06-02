@@ -53,10 +53,10 @@ async function getCached(key, fetcher) {
  *   { product, median_price, currency, n_observations, sample: [...] }
  * or null if no observations.
  */
-async function offPricesDirect({ lat, lng, product, barcode }) {
+async function offPricesDirect({ lat, lng, product, barcode, radius = 25 }) {
   const params = new URLSearchParams({
     page_size: '50',
-    ...(lat && lng ? { location_lat: String(lat), location_lng: String(lng) } : {}),
+    ...(lat && lng ? { location_lat: String(lat), location_lng: String(lng), radius: String(radius) } : {}),
     ...(barcode ? { product_code: barcode } : {}),
     ...(product ? { product_name__icontains: product } : {}),
   });
@@ -64,14 +64,17 @@ async function offPricesDirect({ lat, lng, product, barcode }) {
   if (!r.ok) return null;
   const body = await r.json();
   const items = body.items || [];
-  const valid = items.filter(p => typeof p.price === 'number' && p.price > 0);
+  // OFF Prices is community-sourced worldwide, so even a US-located query
+  // returns foreign observations. We're a USD app — keep only USD prices,
+  // else the median mixes currencies and the label reads e.g. "3.20 EUR".
+  const valid = items.filter(p => typeof p.price === 'number' && p.price > 0 && p.currency === 'USD');
   if (valid.length === 0) return null;
   const prices = valid.map(p => p.price).sort((a, b) => a - b);
   const median = prices[Math.floor(prices.length / 2)];
   return {
     product:        barcode || product,
     median_price:   median,
-    currency:       valid[0].currency || 'USD',
+    currency:       'USD',
     n_observations: valid.length,
     sample:         valid.slice(0, 3).map(p => ({
       price:    p.price,

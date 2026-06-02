@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useCallback, useEffect, useRef, Fragment } from 'react';
-import { FOODS, CATEGORIES, REGIONS } from '../data/foods';
+import { FOODS, BRANDED_FOODS, CATEGORIES, REGIONS } from '../data/foods';
 import { CITIES, CITY_MAP } from '../data/cities';
 import { MACRO_PRESETS, ACTIVITY_LEVELS, MAX_SERVINGS, STORE_TIERS, antioxScore, antiInflammScore } from '../lib/constants';
 import { calcTDEE, calcTargets } from '../lib/tdee';
@@ -171,6 +171,10 @@ export default function Home() {
   // Hide USDA "restaurant"/foodservice rows from the optimizer's candidate
   // set (off by default). Toggled in the Caloric Strategy section.
   const [hideRestaurant, setHideRestaurant] = usePersistentState('ne.hideRestaurant', false);
+  // Include branded/packaged products (whey, brand-name items) in the pool.
+  // OFF by default — they're cheap & processed and otherwise dominate a
+  // cost-minimized plan. Toggled in the Food Sources controls.
+  const [includeBranded, setIncludeBranded] = usePersistentState('ne.includeBranded', false);
   // Health conditions — multi-select. Each selected condition adjusts
   // targets (e.g. hypertension caps sodium at 1500mg) and biases the
   // supplement recommender toward condition-relevant SKUs.
@@ -274,12 +278,18 @@ export default function Home() {
     });
   }, [setTargetOverrides]);
 
-  // Count of "restaurant"/foodservice rows in the DB (drives the toggle's
-  // visibility + label). Static — FOODS doesn't change at runtime.
+  // Count of "restaurant"/foodservice rows (drives the toggle's label).
   const restaurantCount = useMemo(() => FOODS.filter(f => /restaurant/i.test(f.name)).length, []);
+  const brandedCount = BRANDED_FOODS.length;
+  // Candidate pool: foundation + spices/fermented always; branded products
+  // only when the "Include branded" source toggle is on.
+  const sourcedFoods = useMemo(
+    () => (includeBranded ? [...FOODS, ...BRANDED_FOODS] : FOODS),
+    [includeBranded],
+  );
   const availableFoods = useMemo(
-    () => FOODS.filter(f => !excluded.has(f.id) && !(hideRestaurant && /restaurant/i.test(f.name))),
-    [excluded, hideRestaurant],
+    () => sourcedFoods.filter(f => !excluded.has(f.id) && !(hideRestaurant && /restaurant/i.test(f.name))),
+    [sourcedFoods, excluded, hideRestaurant],
   );
 
   // Track which foods just appeared in the plan since the last solve so the
@@ -548,18 +558,33 @@ export default function Home() {
             >★ optimize nutrients</button>
           </div>
         </div>
-        {restaurantCount > 0 && (
-          <label className="flex items-center gap-1.5 text-2xs text-stone-500 cursor-pointer select-none mb-2">
-            <input
-              type="checkbox"
-              checked={hideRestaurant}
-              onChange={(e) => setHideRestaurant(e.target.checked)}
-              className="accent-terra-600"
-            />
-            Hide restaurant / foodservice items
-            <span className="text-stone-400">({restaurantCount} in database)</span>
-          </label>
-        )}
+        <div className="mb-2">
+          <div className="text-2xs uppercase tracking-wider text-stone-400 font-medium mb-1">Food sources</div>
+          {brandedCount > 0 && (
+            <label className="flex items-center gap-1.5 text-2xs text-stone-600 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={includeBranded}
+                onChange={(e) => setIncludeBranded(e.target.checked)}
+                className="accent-sage-600"
+              />
+              Include branded products
+              <span className="text-stone-400">(+{brandedCount} packaged/brand items)</span>
+            </label>
+          )}
+          {restaurantCount > 0 && (
+            <label className="flex items-center gap-1.5 text-2xs text-stone-600 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={hideRestaurant}
+                onChange={(e) => setHideRestaurant(e.target.checked)}
+                className="accent-terra-600"
+              />
+              Hide restaurant / foodservice items
+              <span className="text-stone-400">({restaurantCount} hidden when on)</span>
+            </label>
+          )}
+        </div>
         <div className="flex gap-1.5 flex-wrap">
           {Object.values(MACRO_PRESETS).map(p => (
             <button key={p.id} onClick={() => setPresetId(p.id)}
@@ -761,7 +786,7 @@ export default function Home() {
         <MicronutrientPanel
           nutrientScores={result.nutrientScores}
           relaxed={result.relaxed}
-          allFoods={FOODS}
+          allFoods={sourcedFoods}
           planIds={new Set(result.plan.map(f => f.id))}
           pins={pins}
           onPin={togglePin}
@@ -826,7 +851,7 @@ export default function Home() {
                 plan={result.plan}
                 totals={result.totals}
                 contributorsByNutrient={result.contributorsByNutrient}
-                allFoods={FOODS}
+                allFoods={sourcedFoods}
                 pins={pins}
                 onPin={togglePin}
               />

@@ -82,6 +82,12 @@ export const FOODS = ALL_FOODS.map(f => {
   return { ...f, price: { ...f.price, ...override } };
 });
 
+// Branded products (packaged/brand-name foods). Kept SEPARATE and OFF by
+// default — the "Include branded" Food Source toggle adds them to the pool.
+// Re-exported so all food data flows through foods.js. Already tagged
+// _branded:true; no BLS overrides (branded ids don't map to BLS items).
+export { BRANDED_FOODS } from './brandedFoods.generated';
+
 // Region labels for the pricing keys
 export const REGIONS = {
   us: 'US Average',

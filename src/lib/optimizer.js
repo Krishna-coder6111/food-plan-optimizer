@@ -96,14 +96,15 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
   const isNutrientsMode = mode === 'nutrients';
   const modeMult = isNutrientsMode ? 3 : 1;
 
-  // Floor to fall back to when relaxing an infeasible nutrient. In
-  // 'nutrients' mode the floor starts at `opt`; relax it only as far as the
-  // DRI `min`, never below — otherwise the hardest-to-hit nutrients (vitD,
-  // ca, …) get dropped to 0 and land BELOW where cost mode (floor = min)
-  // would leave them, making "optimize nutrients" produce WORSE micros than
-  // "minimize cost". In cost mode the floor is already `min`, so 0 is the
-  // only remaining relaxation.
-  const relaxFloor = (n) => (isNutrientsMode ? (NUTRIENT_OPTIMA[n]?.min ?? 0) : 0);
+  // Cost mode floors every micronutrient at the RDA (≈100%DV) so a min-cost
+  // plan still hits at least the RDA for all; nutrients mode floors at the
+  // optimum. When a floor is infeasible we relax it down to the DRI `min`
+  // (never below 0-relax), so a relaxed nutrient still clears its minimum
+  // rather than cratering. This is what keeps "optimize nutrients" from being
+  // worse than "minimize cost", and keeps cost mode at ≥ min when the full
+  // RDA can't be hit cheaply.
+  const RDA_FLOOR = 100;
+  const relaxFloor = (n) => (NUTRIENT_OPTIMA[n]?.min ?? 0);
 
   const buildModel = (floorOverrides = {}) => {
     const model = {
@@ -145,7 +146,7 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
       // In nutrients mode, the floor is `opt` (must hit the optimum).
       // The relaxation cascade can still drop it via floorOverrides if
       // infeasible.
-      const baseFloor = isNutrientsMode ? range.opt : range.min;
+      const baseFloor = isNutrientsMode ? range.opt : Math.max(range.min, RDA_FLOOR);
       const floor = (floorOverrides[nutrient] ?? baseFloor) * days;
       model.constraints[`n_${nutrient}_min`] = { min: floor };
       if (range.max > 0) {

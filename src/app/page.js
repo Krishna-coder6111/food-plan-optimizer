@@ -10,7 +10,7 @@ import { usePersistentState, setSerialize, setDeserialize, mapSerialize, mapDese
 import { loadProfiles, saveProfiles, captureSnapshot, makeProfileId, PROFILE_FIELDS } from '../lib/profiles';
 import { HEALTH_CONDITIONS, applyHealthConditions } from '../lib/healthConditions';
 import { buildShoppingList } from '../lib/weeklyPlan';
-import { fetchLivePricesBatch, isUsingProxy, fetchKrogerLocations, fetchKrogerLocationsNear, comparePriceAcrossStores } from '../lib/livePrices';
+import { fetchKrogerLocations, fetchKrogerLocationsNear, comparePriceAcrossStores } from '../lib/livePrices';
 
 import UsMap from '../components/UsMap';
 import MealPlanTable from '../components/MealPlanTable';
@@ -715,8 +715,6 @@ export default function Home() {
             newlyAdded={newlyAdded}
           />
 
-          <LivePricesPanel plan={result.plan} city={city} />
-
           {(excluded.size > 0 || locks.size > 0 || pins.size > 0) && (
             <div className="bg-white rounded-2xl border border-stone-200 p-4 mb-4">
               <div className="text-sm font-semibold mb-2 flex items-center justify-between">
@@ -1070,79 +1068,6 @@ function HormoneRow({ goal, plan, totals, contributorsByNutrient, allFoods = [],
   );
 }
 
-function LivePricesPanel({ plan, city }) {
-  const [state, setState] = useState({ status: 'idle', results: null, error: null });
-
-  const fetchLive = async () => {
-    setState({ status: 'loading', results: null, error: null });
-    try {
-      const map = await fetchLivePricesBatch(plan, city.lat, city.lng);
-      setState({ status: 'done', results: map, error: null });
-    } catch (e) {
-      setState({ status: 'error', results: null, error: e?.message || String(e) });
-    }
-  };
-
-  return (
-    <div className="bg-white rounded-2xl border border-stone-200 p-4 mb-4">
-      <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
-        <div>
-          <h3 className="font-display text-base font-bold flex items-center gap-2">
-            🌍 Live Open Food Facts Prices
-          </h3>
-          <p className="text-2xs text-stone-400">
-            Crowd-sourced. Sparse outside western Europe — treat as informational, not authoritative. {isUsingProxy() ? 'Via Worker proxy.' : 'Direct from prices.openfoodfacts.org.'}
-          </p>
-        </div>
-        <button
-          onClick={fetchLive}
-          disabled={state.status === 'loading'}
-          className="px-3 py-1.5 rounded-lg bg-sage-600 hover:bg-sage-700 text-white text-xs font-semibold disabled:opacity-30 transition"
-        >
-          {state.status === 'loading' ? 'Fetching…' : `Compare near ${city.name}`}
-        </button>
-      </div>
-      {state.status === 'error' && (
-        <div className="text-xs text-red-600 italic">Live fetch failed: {state.error}</div>
-      )}
-      {state.status === 'done' && state.results.size === 0 && (
-        <div className="text-xs text-stone-400 italic">No matching observations near {city.name}. Coverage is best in major US/EU cities.</div>
-      )}
-      {state.status === 'done' && state.results.size > 0 && (
-        <table className="w-full text-xs mt-2">
-          <thead>
-            <tr className="border-b border-stone-200">
-              <th className="text-left py-1 text-2xs uppercase tracking-wider text-stone-400 font-medium">Food</th>
-              <th className="text-right py-1 text-2xs uppercase tracking-wider text-stone-400 font-medium">Baseline</th>
-              <th className="text-right py-1 text-2xs uppercase tracking-wider text-stone-400 font-medium">OFF median</th>
-              <th className="text-right py-1 text-2xs uppercase tracking-wider text-stone-400 font-medium"># obs</th>
-            </tr>
-          </thead>
-          <tbody>
-            {plan.map(f => {
-              const live = state.results.get(f.id);
-              if (!live) return null;
-              const baseline = (f.price[city.region] ?? f.price.us) * (city.costIndex / 100);
-              const liveCcy = live.currency || 'USD';
-              const delta = live.median_price - baseline;
-              return (
-                <tr key={f.id} className="border-b border-stone-50">
-                  <td className="py-1 text-stone-700">{f.name}</td>
-                  <td className="py-1 font-mono text-stone-500 text-right">${baseline.toFixed(2)}</td>
-                  <td className={`py-1 font-mono text-right ${delta > 0 ? 'text-red-600' : 'text-sage-600'}`}>
-                    {liveCcy === 'USD' ? '$' : ''}{live.median_price.toFixed(2)}{liveCcy !== 'USD' ? ` ${liveCcy}` : ''}
-                  </td>
-                  <td className="py-1 font-mono text-stone-400 text-right">{live.n_observations}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-    </div>
-  );
-}
-
 function ShoppingListView({ plan, city, storeTier, days, setDays }) {
   // `plan` is already the optimized {days}-day basket (period quantities),
   // so we group it as-is (multiplier 1) and derive the per-day figure.
@@ -1265,7 +1190,7 @@ function ComparePricesPanel({ plan, days }) {
         setPicked(tagged.slice(0, Math.min(3, tagged.length)).map(s => s.locationId));
       }
       if (tagged.length === 0) {
-        setError(`No Kroger-family stores near "${resolved.tag}". Kroger covers ~2,800 stores in 35 US states; many cities (NYC, Boston, Seattle) aren't covered.`);
+        setError(`No Kroger-family stores near "${resolved.tag}" in the current Kroger Certification (sandbox) environment — it only exposes test stores around Kroger's home regions (e.g. Cincinnati OH / Kentucky). Switch the Worker to the Production Kroger API for real nationwide coverage.`);
       }
     } catch (e) {
       setError(`Couldn't reach the proxy: ${e.message}`);

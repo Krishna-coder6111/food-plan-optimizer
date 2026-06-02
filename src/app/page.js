@@ -1591,6 +1591,24 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
   };
   const sorted = applySort(rows, sort, getters);
 
+  // Bulk-exclude: tick rows (or hit "Exclude all shown" after a search like
+  // "flour") to drop a whole group from the plan in one action.
+  const [selected, setSelected] = useState(() => new Set());
+  const shownIds = sorted.map(f => f.id);
+  const allShownSelected = shownIds.length > 0 && shownIds.every(id => selected.has(id));
+  const toggleSelectAllShown = () => setSelected(prev => {
+    const next = new Set(prev);
+    if (allShownSelected) shownIds.forEach(id => next.delete(id));
+    else shownIds.forEach(id => next.add(id));
+    return next;
+  });
+  const toggleSelectOne = (id) => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const excludeIds = (ids) => { setExcluded(new Set([...excluded, ...ids])); setSelected(new Set()); };
+
   return (
     <div className="bg-white rounded-2xl border border-stone-200 p-4 overflow-x-auto">
       <div className="flex justify-between items-center mb-3 gap-3 flex-wrap">
@@ -1619,6 +1637,22 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
           {Object.entries(CATEGORIES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </select>
         <span className="text-2xs text-stone-400 font-mono">{sorted.length} foods</span>
+        {sorted.length > 0 && (
+          <button
+            onClick={() => excludeIds(shownIds)}
+            className="px-2 py-1.5 rounded-lg text-2xs font-semibold bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition"
+            title="Exclude every food currently shown (after filtering) from the plan"
+          >✕ Exclude all {sorted.length} shown</button>
+        )}
+        {selected.size > 0 && (
+          <>
+            <button
+              onClick={() => excludeIds([...selected])}
+              className="px-2 py-1.5 rounded-lg text-2xs font-semibold bg-red-600 text-white hover:bg-red-700 transition"
+            >✕ Exclude {selected.size} selected</button>
+            <button onClick={() => setSelected(new Set())} className="pill pill-inactive text-2xs">Clear</button>
+          </>
+        )}
       </div>
       <div className="flex gap-2 flex-wrap mb-3">
         {Object.entries(CATEGORIES).map(([k, v]) => (
@@ -1631,6 +1665,7 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b-2 border-stone-200">
+            <th className="py-2 px-1 w-4"><input type="checkbox" checked={allShownSelected} onChange={toggleSelectAllShown} title="Select all shown" className="accent-terra-600 align-middle" /></th>
             <th className="py-2 px-1 w-3" />
             <SortHeader id="name"  sort={sort} setSort={setSort}>Food</SortHeader>
             <th className="py-2 px-1 text-left text-2xs uppercase tracking-wider text-stone-400 font-medium">Unit</th>
@@ -1650,6 +1685,7 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
             const isExcl = excluded.has(f.id);
             return (
               <tr key={f.id} className={`border-b border-stone-50 ${isExcl ? 'opacity-30' : ''}`}>
+                <td className="py-1.5 px-1"><input type="checkbox" checked={selected.has(f.id)} onChange={() => toggleSelectOne(f.id)} className="accent-terra-600 align-middle" /></td>
                 <td className="py-1.5 px-1">
                   <span className="w-1.5 h-1.5 rounded-full inline-block" title={CATEGORIES[f.cat]?.label} style={{ background: CATEGORIES[f.cat]?.color }} />
                 </td>

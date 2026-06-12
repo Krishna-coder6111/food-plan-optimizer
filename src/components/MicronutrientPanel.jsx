@@ -51,9 +51,12 @@ function Bar({ nutrient, score, allFoods = [], planIds = new Set(), pins = new S
   const effectiveStatus =
     storage === 'long' && status === 'deficient' && actual >= min * 0.5 ? 'low' : status;
 
+  // 'low' = below the RDA (amber). 'rda' = RDA met but short of the optimal
+  // zone (light green) — fine in cost mode, the gap nutrients-mode chases.
   const fill = {
     deficient: 'bg-red-500',
     low:       'bg-amber-500',
+    rda:       'bg-sage-400',
     optimal:   'bg-sage-600',
     excessive: 'bg-orange-500',
   }[effectiveStatus];
@@ -61,6 +64,7 @@ function Bar({ nutrient, score, allFoods = [], planIds = new Set(), pins = new S
   const labelColor = {
     deficient: 'text-red-600',
     low:       'text-amber-600',
+    rda:       'text-sage-600',
     optimal:   'text-sage-700',
     excessive: 'text-orange-600',
   }[effectiveStatus];
@@ -165,6 +169,8 @@ export default function MicronutrientPanel({ nutrientScores, relaxed = [], allFo
 
   const deficientCount = entries.filter(([, s]) => s.status === 'deficient').length;
   const optimalCount   = entries.filter(([, s]) => s.status === 'optimal').length;
+  const rdaCount       = entries.filter(([, s]) => s.status === 'rda').length;
+  const lowCount       = entries.filter(([, s]) => s.status === 'low').length;
 
   return (
     <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-sm">
@@ -172,6 +178,12 @@ export default function MicronutrientPanel({ nutrientScores, relaxed = [], allFo
         <h2 className="font-display text-lg font-bold">Micronutrient Optimization</h2>
         <div className="text-2xs text-stone-400 font-mono">
           <span className="text-sage-700">{optimalCount}</span> optimal
+          {rdaCount > 0 && (
+            <> · <span className="text-sage-500">{rdaCount}</span> ≥RDA</>
+          )}
+          {lowCount > 0 && (
+            <> · <span className="text-amber-600">{lowCount}</span> below RDA</>
+          )}
           {deficientCount > 0 && (
             <> · <span className="text-red-500">{deficientCount}</span> deficient</>
           )}

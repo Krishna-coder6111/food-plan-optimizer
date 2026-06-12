@@ -373,6 +373,85 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
     }
   }
 
+  // ─── Post-rounding repair ───────────────────────────────────────────
+  // The LP solves fractional servings; rounding to integers shaves a few
+  // %DV off nutrients the continuous solution had sitting exactly on their
+  // floor (nutrients mode lands 1–4% under opt; at days=1 a rounded-away
+  // half-serving of sardines is ~22%DV of vitD). Greedily top servings back
+  // up until every floor is met by the ROUNDED plan — respecting the
+  // calorie window, macro ceilings, per-food caps and nutrient maxima from
+  // the final model. Locked foods are never bumped.
+  if (result.feasible) {
+    const floorFor = (n) => {
+      if (relaxed.includes(n)) return relaxFloor(n);
+      const range = NUTRIENT_OPTIMA[n];
+      return isNutrientsMode ? range.opt : Math.max(range.min, RDA_FLOOR);
+    };
+    const planById = new Map(plan.map(p => [p.id, p]));
+    const pTotals = Object.fromEntries(Object.keys(NUTRIENT_OPTIMA).map(n =>
+      [n, plan.reduce((s, f) => s + (f[n] || 0) * f.servings, 0)]));
+    const macro = { cal: 0, na: 0, sug: 0, sf: 0, chol: 0 };
+    for (const f of plan) for (const k of Object.keys(macro)) macro[k] += (f[k] || 0) * f.servings;
+    // Calorie grace: rounding alone can land the plan AT the ×1.07 calorie
+    // ceiling, which would veto every repair candidate and strand nutrients
+    // a hair under their floor. Allow repair up to +3% beyond the window —
+    // hitting the RDA/optimum slightly over the calorie band is the better
+    // trade, and the grace is only consumed when a floor is actually short.
+    const calGrace = Math.round(targets.calories * days * 0.03);
+    const ceil = {
+      cal:  (model.constraints.cal_max?.max   ?? Math.round(targets.calories * 1.07 * days)) + calGrace,
+      na:   model.constraints.sodium_max?.max ?? (targets.maxSodium ?? 2300) * days,
+      sug:  model.constraints.sugar_max?.max  ?? Infinity,
+      sf:   model.constraints.satfat_max?.max ?? Infinity,
+      chol: model.constraints.chol_max?.max   ?? Infinity,
+    };
+    for (let iter = 0; iter < 80; iter++) {
+      const deficits = {};
+      for (const n of Object.keys(NUTRIENT_OPTIMA)) {
+        const d = floorFor(n) * days - pTotals[n];
+        if (d > 0.5) deficits[n] = d;
+      }
+      if (Object.keys(deficits).length === 0) break;
+      let best = null, bestScore = 0;
+      for (const food of foods) {
+        if (locks.has(food.id)) continue;
+        const cur = planById.get(food.id)?.servings || 0;
+        if (cur + 1 > (MAX_SERVINGS[food.cat] || SOLVER_CONFIG.maxPerFoodDefault) * days) continue;
+        if (macro.cal + (food.cal || 0) > ceil.cal) continue;
+        if (macro.na + (food.na || 0) > ceil.na) continue;
+        if (macro.sug + (food.sug || 0) > ceil.sug) continue;
+        if (macro.sf + (food.sf || 0) > ceil.sf) continue;
+        if (macro.chol + (food.chol || 0) > ceil.chol) continue;
+        let withinMax = true;
+        for (const [n, range] of Object.entries(NUTRIENT_OPTIMA)) {
+          if (range.max <= 0) continue;
+          const mx = model.constraints[`n_${n}_max`]?.max ?? range.max * days;
+          if (pTotals[n] + (food[n] || 0) > mx) { withinMax = false; break; }
+        }
+        if (!withinMax) continue;
+        let gain = 0;
+        for (const [n, d] of Object.entries(deficits)) gain += Math.min(food[n] || 0, d);
+        if (gain <= 0) continue;
+        const price = (food.price[regionKey] ?? food.price.us) * costMult;
+        const score = gain / Math.max(0.05, price);
+        if (score > bestScore) { bestScore = score; best = food; }
+      }
+      if (!best) break;
+      const price = (best.price[regionKey] ?? best.price.us) * costMult;
+      const item = planById.get(best.id);
+      if (item) {
+        item.servings += 1;
+        item.totalCost = +(price * item.servings).toFixed(2);
+      } else {
+        const added = { ...best, servings: 1, totalCost: +price.toFixed(2) };
+        plan.push(added);
+        planById.set(best.id, added);
+      }
+      for (const n of Object.keys(NUTRIENT_OPTIMA)) pTotals[n] += (best[n] || 0);
+      for (const k of Object.keys(macro)) macro[k] += (best[k] || 0);
+    }
+  }
+
   // ─── Totals ─────────────────────────────────────────────────────────
   // Sum over the plan = PERIOD totals; normalize to a PER-DAY average so the
   // targets/nutrient UI (which uses per-day DRI ranges) stays correct. Plan
@@ -444,11 +523,24 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
   for (const [nutrient, range] of Object.entries(NUTRIENT_OPTIMA)) {
     const actual = totals[nutrient] || 0;
     const absorbed = absorbedTotals[nutrient] || 0;
+    // Status tiers (most consumers color on these):
+    //   deficient  < DRI min          → red
+    //   low        < 100%DV (RDA)     → amber: the RDA was NOT met
+    //   rda        ≥ RDA, < opt       → light green: RDA met, short of optimal
+    //   optimal    ≥ opt, ≤ max       → green
+    //   excessive  > max              → orange
+    // Amber strictly means "below the RDA" so cost mode (floors at RDA)
+    // shows no amber when it succeeds, and the supplement recommender only
+    // fires for true sub-RDA gaps.
+    // Compare on the ROUNDED value the user sees, so a 99.93% intake that
+    // displays as "100%" can never be painted amber.
+    const shown = Math.round(actual);
     let status;
-    if (actual < range.min)      status = 'deficient';
-    else if (actual < range.opt) status = 'low';
-    else if (range.max === 0 || actual <= range.max) status = 'optimal';
-    else                         status = 'excessive';
+    if (shown < range.min)      status = 'deficient';
+    else if (shown < 100)       status = 'low';
+    else if (shown < range.opt) status = 'rda';
+    else if (range.max === 0 || shown <= range.max) status = 'optimal';
+    else                        status = 'excessive';
     nutrientScores[nutrient] = {
       label:    range.label,
       actual:   Math.round(actual),

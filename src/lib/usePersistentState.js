@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 /**
  * usePersistentState — useState that mirrors to localStorage.
@@ -20,7 +20,14 @@ export function usePersistentState(
   { serialize = JSON.stringify, deserialize = JSON.parse } = {},
 ) {
   const [value, setValue] = useState(initial);
-  const hydratedRef = useRef(false);
+  // Hydration tracked in STATE, not a ref. With a ref, the save effect runs
+  // in the same commit as the load effect (which has only QUEUED the stored
+  // value) — the guard passes while `value` is still `initial`, and the
+  // initial value clobbers the stored one. React StrictMode then re-runs
+  // the load effect and reads back the clobbered value, making the loss
+  // permanent in dev. State-based hydration means the save effect can't
+  // fire until the post-hydration render, where `value` is the stored one.
+  const [hydrated, setHydrated] = useState(false);
 
   // Load once, post-mount.
   useEffect(() => {
@@ -34,14 +41,14 @@ export function usePersistentState(
     } catch (e) {
       console.warn('usePersistentState: failed to read', key, e);
     } finally {
-      hydratedRef.current = true;
+      setHydrated(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
   // Save on every change once hydrated.
   useEffect(() => {
-    if (!hydratedRef.current) return;
+    if (!hydrated) return;
     if (typeof window === 'undefined') return;
     try {
       window.localStorage.setItem(key, serialize(value));
@@ -49,7 +56,7 @@ export function usePersistentState(
       console.warn('usePersistentState: failed to write', key, e);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, value]);
+  }, [key, value, hydrated]);
 
   return [value, setValue];
 }

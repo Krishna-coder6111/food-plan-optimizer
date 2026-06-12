@@ -184,7 +184,11 @@ export default function Home() {
   // supplement recommender toward condition-relevant SKUs.
   const [conditions, setConditions] = usePersistentState('ne.conditions', []);
   const [tab, setTab]           = useState('plan');
-  const [showProfile, setShowProfile] = useState(true);
+  // Profile collapse — persisted. null = user hasn't chosen, in which case
+  // we auto-collapse once the profile is complete: returning users land on
+  // their PLAN, not a wall of setup inputs. (profileOpen derived below,
+  // after isReadyForPlan exists.)
+  const [showProfile, setShowProfile] = usePersistentState('ne.showProfile', null);
 
   // Saved profile slots — multiple named snapshots of the full profile.
   // Lives in localStorage under `ne.profiles`; loaded post-mount to avoid
@@ -256,6 +260,9 @@ export default function Home() {
   const storeTier = storeTierId ? (STORE_TIERS.find(s => s.id === storeTierId) || null) : null;
   const preset  = MACRO_PRESETS[presetId];
   const isReadyForPlan = !!(city && storeTier);
+  // Auto-collapse the profile once setup is complete (unless the user has
+  // explicitly toggled it).
+  const profileOpen = showProfile ?? !isReadyForPlan;
   const effectiveCostIndex = isReadyForPlan
     ? Math.round(city.costIndex * storeTier.mult)
     : 100;
@@ -440,10 +447,10 @@ export default function Home() {
               title="Erase all your saved data on this browser (use this if the app gets stuck)"
             >Reset</button>
             <button
-              onClick={() => setShowProfile(p => !p)}
+              onClick={() => setShowProfile(!profileOpen)}
               className="text-xs text-stone-400 hover:text-stone-600 transition"
             >
-              {showProfile ? 'Hide Profile ▲' : 'Edit Profile ▼'}
+              {profileOpen ? 'Hide Profile ▲' : 'Edit Profile ▼'}
             </button>
           </div>
         </div>
@@ -456,8 +463,24 @@ export default function Home() {
         </p>
       </header>
 
+      {/* collapsed-profile summary chip — who the plan is for, one line */}
+      {!profileOpen && isReadyForPlan && (
+        <button
+          onClick={() => setShowProfile(true)}
+          className="w-full flex items-center gap-2 flex-wrap bg-white rounded-2xl border border-stone-200 px-4 py-2.5 mb-4 shadow-sm text-left hover:border-terra-300 transition group"
+          title="Open the full profile editor"
+        >
+          <span className="text-sm leading-none">{gender === 'male' ? '♂' : '♀'}</span>
+          <span className="text-xs font-mono text-stone-600">{age}y · {heightFt}&apos;{heightIn}&quot; · {weightLbs} lb · {activity.replace('_', ' ')}</span>
+          <span className="text-2xs text-stone-300">·</span>
+          <span className="text-xs text-stone-500">{city.name}, {city.state}</span>
+          {storeTier && <span className="text-2xs text-stone-400 hidden sm:inline">· {storeTier.name}</span>}
+          <span className="ml-auto text-2xs text-terra-600 font-semibold group-hover:underline whitespace-nowrap">Edit profile ▾</span>
+        </button>
+      )}
+
       {/* profile panel */}
-      {showProfile && (
+      {profileOpen && (
         <section className="bg-white rounded-2xl border border-stone-200 p-4 mb-4 shadow-sm">
           <ProfileSlots
             saved={savedProfiles}

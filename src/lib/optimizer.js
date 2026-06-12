@@ -1,5 +1,5 @@
 import solver from 'javascript-lp-solver';
-import { MAX_SERVINGS, NUTRIENT_OPTIMA, SOLVER_CONFIG, BIOAVAIL_BY_CATEGORY } from './constants';
+import { NUTRIENT_OPTIMA, SOLVER_CONFIG, BIOAVAIL_BY_CATEGORY, servingCap } from './constants';
 
 /**
  * bioavail(food, nutrient) — fraction of `food[nutrient]` that the body
@@ -164,7 +164,7 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
     // ─── Food variables ───────────────────────────────────────────────
     for (const food of foods) {
       const basePrice = (food.price[regionKey] ?? food.price.us) * costMult;
-      const maxS      = MAX_SERVINGS[food.cat] || SOLVER_CONFIG.maxPerFoodDefault;
+      const maxS      = servingCap(food);
       const varName   = `f${food.id}`;
 
       // Hormone nudge: small discount on hormone-supporting foods.
@@ -205,10 +205,14 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
       v[`cap_${varName}`] = 1;
       model.constraints[`cap_${varName}`] = { max: maxS * days };
 
-      // locked servings (quantity-adjust UI) → pin upper & lower
+      // Locked servings (quantity-adjust UI) → pin upper & lower.
+      // Lock quantities are PERIOD servings — exactly the number shown on
+      // (and set by) the meal-plan stepper for the current horizon. Do NOT
+      // scale by days here: that would double-count (the stepper already
+      // displays period amounts) and demand e.g. 3×14=42 servings.
       if (locks.has(food.id)) {
         const q = locks.get(food.id);
-        model.constraints[`lock_${varName}`] = { equal: q * days };
+        model.constraints[`lock_${varName}`] = { equal: q };
         v[`lock_${varName}`] = 1;
       }
 
@@ -416,7 +420,7 @@ export function optimizeDiet(foods, targets, region, costIndex, gender, opts = {
       for (const food of foods) {
         if (locks.has(food.id)) continue;
         const cur = planById.get(food.id)?.servings || 0;
-        if (cur + 1 > (MAX_SERVINGS[food.cat] || SOLVER_CONFIG.maxPerFoodDefault) * days) continue;
+        if (cur + 1 > servingCap(food) * days) continue;
         if (macro.cal + (food.cal || 0) > ceil.cal) continue;
         if (macro.na + (food.na || 0) > ceil.na) continue;
         if (macro.sug + (food.sug || 0) > ceil.sug) continue;

@@ -47,6 +47,30 @@ export const MAX_SERVINGS = {
 };
 
 /**
+ * Per-FOOD serving-cap overrides (per day), keyed by name regex.
+ *
+ * The category caps assume normal serving sizes, but USDA foods are flat
+ * 100g units: "vegetables: 5" lets the LP pick 500g of raw garlic a day —
+ * technically a vegetable, practically inedible. These cap the foods the
+ * solver loves for the wrong reasons (cheap, nutrient-dense per dollar) at
+ * amounts a human would plausibly eat. First matching pattern wins.
+ */
+export const SERVING_CAP_OVERRIDES = [
+  [/\bgarlic\b/i,        1],   // 100g = a whole head of garlic
+  [/\bginger\b/i,        1],
+  [/peanut butter/i,     2],   // 200g/day is already generous
+  [/\bonions?\b/i,       2],
+  [/pepper, (hot|jalapeno|serrano|habanero)/i, 1],
+];
+
+export function servingCap(food) {
+  for (const [pat, cap] of SERVING_CAP_OVERRIDES) {
+    if (pat.test(food.name)) return cap;
+  }
+  return MAX_SERVINGS[food.cat] || SOLVER_CONFIG.maxPerFoodDefault;
+}
+
+/**
  * NUTRIENT_OPTIMA — all values in %DV.
  *
  *   min: absolute floor the solver will try to hit

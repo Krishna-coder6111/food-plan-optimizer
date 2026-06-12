@@ -37,7 +37,7 @@ function buildSig(args) {
   const tgt     = `${targets.calories}|${targets.protein}|${targets.carbs}|${targets.fat}|${targets.fiber}|${targets.maxSatFat}|${targets.maxSugar}|${targets.maxChol}`;
   const lockSig = [...locks].sort((a, b) => a[0] - b[0]).map(([k, v]) => `${k}:${v}`).join(',');
   const pinSig  = [...pins].sort((a, b) => a - b).join(',');
-  return `${foodIds}::${tgt}::${args.region}::${args.costIndex}::${args.gender}::${lockSig}::${pinSig}::${args.mode || 'cost'}`;
+  return `${foodIds}::${tgt}::${args.region}::${args.costIndex}::${args.gender}::${lockSig}::${pinSig}::${args.mode || 'cost'}::${args.days || 1}`;
 }
 
 // Module-singleton worker. Created on first need, replaced on terminate.
@@ -92,6 +92,7 @@ function packArgs(args) {
     locks:    [...(args.locks || new Map())],
     pins:     [...(args.pins  || new Set())],
     mode:     args.mode || 'cost',
+    days:     args.days || 1,
   };
 }
 
@@ -129,7 +130,7 @@ export function useOptimizer(args) {
       if (!w) {
         try {
           setResult(optimizeDiet(a.foods, a.targets, a.region, a.costIndex, a.gender,
-            { locks: a.locks, pins: a.pins, mode: a.mode }));
+            { locks: a.locks, pins: a.pins, mode: a.mode, days: a.days }));
         } catch (e) {
           console.error('optimizer error (sync fallback)', e);
           setError(e?.message || String(e));

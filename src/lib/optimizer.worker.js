@@ -24,6 +24,7 @@ self.addEventListener('message', (e) => {
     locks: new Map(args.locks || []),
     pins:  new Set(args.pins  || []),
     mode:  args.mode || 'cost',
+    days:  args.days || 1,
   };
 
   try {

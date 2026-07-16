@@ -45,12 +45,15 @@ your nutrient targets at the lowest possible cost in your city.
 - Live Kroger Catalog API for real per-store prices via a Cloudflare
   Worker proxy. Background Cron pre-warms the top 20 metros nightly so
   the user's first compare-prices click hits warm cache (~150 ms).
-- Open Food Facts Prices for global crowd-sourced price data.
+  (Kroger's Certification sandbox only covers its home regions; switch
+  to the Production API for nationwide coverage.)
 
 **Foods**
-- ~80 hand-curated foods (with hormone tags, real serving units).
-- + ~387 USDA Foundation Foods auto-merged from `npm run pipeline`.
-- + Optional ~2000 USDA Branded Foods (`USDA_INCLUDE_BRANDED=1`).
+- ~390 foods: a small curated set (spices, fermented, organ meats, oily
+  fish, fortified items, as-consumed staples — with hormone tags and real
+  serving units) + ~364 USDA Foundation Foods from `npm run pipeline`.
+- Live branded-food search (FatSecret, ~1.7M products) — search "whey
+  protein" in Plan settings and add results straight to the plan.
 - 9 macro presets (maingain / lean bulk / cut / recomp / keto / …).
 
 **UI**
@@ -62,8 +65,8 @@ your nutrient targets at the lowest possible cost in your city.
 **Infra**
 - Fully static, deployed on GitHub Pages.
 - Cloudflare Worker proxies live API calls (FatSecret OAuth2 + Kroger
-  OAuth2 + OFF Prices) with KV-cached tokens and 24h price cache.
-- Vitest suite (24 passing) + GH Actions test workflow.
+  OAuth2) with KV-cached tokens and 24h price cache.
+- Vitest suite (30 passing) + GH Actions test workflow.
 
 > **Live demo:** https://krishna-coder6111.github.io/food-plan-optimizer/
 
@@ -93,14 +96,18 @@ cd ../..
 # emits src/data/blsOverrides.js and src/data/usdaFoods.generated.js.
 npm run pipeline
 
-# To also include ~2000 USDA Branded Foods:
-USDA_INCLUDE_BRANDED=1 npm run pipeline
-
 # Rebuild so the new data is baked into the bundle:
 npm run build
 ```
 
-After this, FOODS expands from ~80 to ~470 (or ~2470 with branded).
+After this, FOODS expands to ~390 (curated + USDA Foundation).
+
+> **Branded foods:** don't bake them into the bundle. `USDA_INCLUDE_BRANDED=1`
+> still works as a local experiment, but it merges an arbitrary slice of the
+> catalog into the optimizer's always-on pool and degrades plans (cheap
+> processed items dominate a cost-minimizing LP). The supported path is the
+> **live FatSecret search** in the app — full catalog, on demand, off the
+> bundle.
 
 ### 3. Live grocery-store prices (optional)
 
@@ -159,7 +166,7 @@ curl https://nutrient-engine-proxy.<account>.workers.dev/warm
 | Tab | What it shows |
 |---|---|
 | **Meal Plan** | The day's optimized plan. Sortable columns, ± to adjust quantities, lock to pin, × to exclude. Hover the Micro bar to see which nutrients each food provides. |
-| **Shopping List** | The same daily plan × N days (default 7), grouped by store section, with per-section + weekly totals. Configurable up to 30 days. |
+| **Shopping List** | The optimized N-day basket (default 1 week; up to 30 days), grouped by store section, with per-section + period totals. The whole period is solved as ONE basket — not a daily plan × N — so small amounts of nutrient-dense foods that would round to zero in a one-day plan make it in. |
 | **Micronutrients** | Per-nutrient bars. Click any nutrient to see which plan items are providing it. Each row tags the storage horizon — `daily` (water-soluble), `weekly` (fat-soluble), `months` (long-term stores like Fe / B12 / Ca). |
 | **City Map** | Real US choropleth with Albers projection. Tap a city to switch. |
 | **T Support / Hormones** | Per-target row (zinc, vit D, omega-3, magnesium, …). Click to expand and see all contributing foods with per-serving amounts. |
@@ -249,7 +256,7 @@ food-plan-optimizer/
 │   ├── emit_overrides.py              # Pipeline JSON → blsOverrides.js
 │   └── .env.example                   # Secrets template (BLS_API_KEY, USDA_API_KEY)
 ├── worker/                            # Cloudflare Worker — live API proxy (scaffold)
-│   ├── src/index.js                   # OFF Prices + FatSecret + KV cache
+│   ├── src/index.js                   # FatSecret + Kroger + KV cache
 │   ├── wrangler.toml
 │   └── package.json
 ├── next.config.js                     # output: 'export', basePath from env
@@ -274,12 +281,14 @@ npm run build                        # bake into bundle
 ## Live grocery / nutrition APIs (optional)
 
 Scaffolded in `worker/`. Cloudflare Worker proxies:
-- **Open Food Facts Prices** — global, public, lat/lng-aware, no key
-- **FatSecret Premier Free** — US, OAuth1, free with attribution
+- **FatSecret Platform** — OAuth2, IP-allowlisted to Cloudflare's egress
+  ranges; powers the in-app live branded-food search (`src/lib/liveFoods.js`).
+- **Kroger Catalog** — OAuth2; per-store product prices + store locator
+  (Certification sandbox by default; set `KROGER_API_BASE` for Production).
 
-Edge-cached in KV (24 h TTL). Client SDK in `src/lib/livePrices.js`
-batches 8 in flight against the Worker. Setup walkthrough +
-bottleneck analysis in [`docs/API_PROXY.md`](docs/API_PROXY.md).
+Edge-cached in KV (24 h TTL). Client SDKs in `src/lib/livePrices.js` and
+`src/lib/liveFoods.js`. Setup walkthrough + bottleneck analysis in
+[`docs/API_PROXY.md`](docs/API_PROXY.md).
 
 To enable in your build: deploy the Worker (`cd worker && wrangler
 deploy`), then set `NEXT_PUBLIC_PRICES_API` to its URL. Without that
@@ -292,8 +301,8 @@ env var, the SDK no-ops and the app uses baseline prices.
 | USDA FoodData Central | Reference nutrition (Foundation + Branded) | [fdc.nal.usda.gov](https://fdc.nal.usda.gov/) |
 | BLS Average Prices | Regional grocery prices | [download.bls.gov/pub/time.series/ap/](https://download.bls.gov/pub/time.series/ap/) |
 | BLS CPI | Regional food inflation | [bls.gov/cpi/](https://www.bls.gov/cpi/) |
-| Open Food Facts Prices | Global crowd-sourced grocery prices | [prices.openfoodfacts.org](https://prices.openfoodfacts.org/) |
-| FatSecret Platform API | US nutrition + barcode + autocomplete | [platform.fatsecret.com](https://platform.fatsecret.com/) |
+| FatSecret Platform API | Live branded-food search (~1.7M products) | [platform.fatsecret.com](https://platform.fatsecret.com/) |
+| Kroger Catalog API | Per-store product prices | [developer.kroger.com](https://developer.kroger.com/) |
 
 ## Tech stack
 
@@ -363,19 +372,17 @@ env var, the SDK no-ops and the app uses baseline prices.
 - [x] Shopping List view (with N-day customization)
 - [x] BLS pipeline → foods.js loader
 - [x] USDA Foundation Foods auto-merge (~387 added foods)
-- [x] USDA Branded Foods (opt-in, ~2000 capped)
-- [x] Cloudflare Worker (OFF Prices + FatSecret OAuth2 + Kroger OAuth2)
-- [x] Direct OFF Prices fallback when Worker isn't deployed
+- [x] Live branded-food search (FatSecret, ~1.7M products) — replaced the bundled branded slice
+- [x] Cloudflare Worker (FatSecret OAuth2 + Kroger OAuth2)
+- [x] Multi-day horizon optimization (1 day → 1 month, single-basket LP)
 - [x] Worker deployed + UI wired via `NEXT_PUBLIC_PRICES_API`
 - [x] Solver in terminable Web Worker (multi-pin no longer freezes)
 - [x] Auto-recommend supplements (greedy, gap-filling)
 - [x] Health-condition multi-select (anemia, PCOS, pregnancy, HBP, etc.)
 - [x] Compare prices across multiple cities live via Kroger API
 - [x] Cron-triggered pre-warm of top-20-metro Kroger cache
-- [ ] Worldwide expansion via OFF Prices (country picker + FX layer)
-- [ ] Per-store filtering on OFF Prices (`location.osm_*` brand mapping)
 - [ ] PWA support (offline, installable)
-- [ ] FatSecret IP-allowlist setup for production
+- [x] FatSecret IP-allowlist (Cloudflare egress ranges whitelisted; live in prod)
 
 ## Contributing
 

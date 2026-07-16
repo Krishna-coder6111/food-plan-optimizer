@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useMemo, useCallback, useEffect, useRef, Fragment } from 'react';
-import { FOODS, BRANDED_FOODS, CATEGORIES, REGIONS } from '../data/foods';
+import { FOODS, CATEGORIES, REGIONS } from '../data/foods';
+import LiveFoodSearch from '../components/LiveFoodSearch';
 import { CITIES, CITY_MAP } from '../data/cities';
 import { MACRO_PRESETS, ACTIVITY_LEVELS, MAX_SERVINGS, STORE_TIERS, antioxScore, antiInflammScore } from '../lib/constants';
 import { calcTDEE, calcTargets } from '../lib/tdee';
@@ -171,10 +172,10 @@ export default function Home() {
   // Hide USDA "restaurant"/foodservice rows from the optimizer's candidate
   // set (off by default). Toggled in the Caloric Strategy section.
   const [hideRestaurant, setHideRestaurant] = usePersistentState('ne.hideRestaurant', false);
-  // Include branded/packaged products (whey, brand-name items) in the pool.
-  // OFF by default — they're cheap & processed and otherwise dominate a
-  // cost-minimized plan. Toggled in the Food Sources controls.
-  const [includeBranded, setIncludeBranded] = usePersistentState('ne.includeBranded', false);
+  // Live-searched branded foods (FatSecret via the Worker) the user added.
+  // FOODS-shaped records; they join the candidate pool and are usually
+  // pinned so they appear in the plan. Persisted across sessions.
+  const [customFoods, setCustomFoods] = usePersistentState('ne.customFoods', []);
   // Plan horizon (days). The optimizer solves ONE basket for this many days
   // (see optimizer.js). Lifted here so the Plan, Shopping and Compare views
   // all share it — no more "daily plan ×7".
@@ -291,12 +292,11 @@ export default function Home() {
 
   // Count of "restaurant"/foodservice rows (drives the toggle's label).
   const restaurantCount = useMemo(() => FOODS.filter(f => /restaurant/i.test(f.name)).length, []);
-  const brandedCount = BRANDED_FOODS.length;
-  // Candidate pool: foundation + spices/fermented always; branded products
-  // only when the "Include branded" source toggle is on.
+  // Candidate pool: curated + USDA foundation, plus any live-searched
+  // branded foods the user added.
   const sourcedFoods = useMemo(
-    () => (includeBranded ? [...FOODS, ...BRANDED_FOODS] : FOODS),
-    [includeBranded],
+    () => (customFoods.length ? [...FOODS, ...customFoods] : FOODS),
+    [customFoods],
   );
   const availableFoods = useMemo(
     () => sourcedFoods.filter(f => !excluded.has(f.id) && !(hideRestaurant && /restaurant/i.test(f.name))),
@@ -586,20 +586,14 @@ export default function Home() {
             >★ optimize nutrients</button>
           </div>
         </div>
+        <LiveFoodSearch
+          customFoods={customFoods}
+          setCustomFoods={setCustomFoods}
+          pins={pins}
+          togglePin={togglePin}
+        />
         <div className="mb-2">
           <div className="text-2xs uppercase tracking-wider text-stone-400 font-medium mb-1">Food sources</div>
-          {brandedCount > 0 && (
-            <label className="flex items-center gap-1.5 text-2xs text-stone-600 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={includeBranded}
-                onChange={(e) => setIncludeBranded(e.target.checked)}
-                className="accent-sage-600"
-              />
-              Include branded products
-              <span className="text-stone-400">(+{brandedCount} packaged/brand items)</span>
-            </label>
-          )}
           {restaurantCount > 0 && (
             <label className="flex items-center gap-1.5 text-2xs text-stone-600 cursor-pointer select-none">
               <input

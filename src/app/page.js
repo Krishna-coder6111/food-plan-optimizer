@@ -1587,11 +1587,11 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
             <th className="py-2 px-1 w-3" />
             <SortHeader id="name"  sort={sort} setSort={setSort}>Food</SortHeader>
             <th className="py-2 px-1 text-left text-2xs uppercase tracking-wider text-stone-400 font-medium">Unit</th>
-            <SortHeader id="p"     sort={sort} setSort={setSort}>Prot</SortHeader>
+            <SortHeader id="p"     sort={sort} setSort={setSort}>Prot (g)</SortHeader>
             <SortHeader id="cal"   sort={sort} setSort={setSort}>Cal</SortHeader>
-            <SortHeader id="price" sort={sort} setSort={setSort}>Cost ({region.toUpperCase()})</SortHeader>
+            <SortHeader id="price" sort={sort} setSort={setSort}>Cost ($, {region.toUpperCase()})</SortHeader>
             <SortHeader id="pd"    sort={sort} setSort={setSort}>P/$</SortHeader>
-            <SortHeader id="fib"    sort={sort} setSort={setSort}>Fiber</SortHeader>
+            <SortHeader id="fib"    sort={sort} setSort={setSort}>Fiber (g)</SortHeader>
             <SortHeader id="micro"  sort={sort} setSort={setSort}>Micro</SortHeader>
             <SortHeader id="antiox" sort={sort} setSort={setSort}>Antiox</SortHeader>
             <SortHeader id="dii"    sort={sort} setSort={setSort}>Inflam</SortHeader>
@@ -1609,16 +1609,16 @@ function FoodsTab({ city, effectiveCostIndex, excluded, setExcluded, toggleExclu
                 </td>
                 <td className="py-1.5 px-1 font-medium text-stone-700">{f.name}</td>
                 <td className="py-1.5 px-1 text-stone-400 text-2xs">{f.unit}</td>
-                <td className="py-1.5 px-1 font-mono font-semibold text-sage-600">{f.p}g</td>
-                <td className="py-1.5 px-1 font-mono text-stone-400">{f.cal}</td>
-                <td className="py-1.5 px-1 font-mono text-terra-600">${f._price.toFixed(2)}</td>
-                <td className="py-1.5 px-1 font-mono font-bold" style={{ color: f._pd > 30 ? '#3D6340' : f._pd > 18 ? '#B24F1C' : '#918779' }}>{f._pd}</td>
-                <td className="py-1.5 px-1 text-stone-400">{f.fib}g</td>
+                <td className="py-1.5 px-1 font-mono font-semibold text-stone-800 text-right tabular-nums">{f.p}</td>
+                <td className="py-1.5 px-1 font-mono text-stone-400 text-right tabular-nums">{f.cal}</td>
+                <td className="py-1.5 px-1 font-mono text-stone-500 text-right tabular-nums">{f._price.toFixed(2)}</td>
+                <td className="py-1.5 px-1 font-mono font-bold text-stone-800 text-right tabular-nums">{f._pd}</td>
+                <td className="py-1.5 px-1 font-mono text-stone-400 text-right tabular-nums">{f.fib}</td>
                 <td className="py-1.5 px-1"><MicroBarWithTip food={f} /></td>
-                <td className="py-1.5 px-1 font-mono font-semibold" title="Antioxidant capacity (loosely indexed to ORAC, 0–10)" style={{ color: f._antiox >= 8 ? '#3D6340' : f._antiox >= 5 ? '#B24F1C' : '#918779' }}>
+                <td className="py-1.5 px-1 font-mono text-stone-500 text-right tabular-nums" title="Antioxidant capacity (loosely indexed to ORAC, 0–10)">
                   {f._antiox}
                 </td>
-                <td className="py-1.5 px-1 font-mono font-semibold" title="Dietary Inflammatory Index — negative = anti-inflammatory, positive = pro-inflammatory" style={{ color: f._dii < -3 ? '#3D6340' : f._dii > 2 ? '#B91C1C' : '#918779' }}>
+                <td className="py-1.5 px-1 font-mono text-stone-500 text-right tabular-nums" title="Dietary Inflammatory Index — negative = anti-inflammatory, positive = pro-inflammatory">
                   {f._dii > 0 ? '+' : ''}{f._dii}
                 </td>
                 <td className="py-1.5 px-1 whitespace-nowrap">

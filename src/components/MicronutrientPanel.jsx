@@ -17,6 +17,18 @@ import { recommendSupplements } from '../lib/supplements';
 
 const BAR_SCALE = 300;
 
+// Validated against the white card surface (dataviz skill validator):
+// lightness band, chroma floor, CVD adjacent-pair separation. #6FAE76 is
+// <3:1 contrast — sanctioned as "relief" because every bar's % value is a
+// visible ink label beside it.
+const STATUS_FILL = {
+  deficient: '#EF4444',
+  low:       '#D97706',
+  rda:       '#6FAE76',
+  optimal:   '#3F8C47',
+  excessive: '#EF4444',
+};
+
 const STORAGE_TAG_STYLE = {
   water: 'bg-stone-100 text-stone-600',           // strict: aim daily
   fat:   'bg-amber-50 text-amber-700',            // weekly avg matters
@@ -51,23 +63,12 @@ function Bar({ nutrient, score, allFoods = [], planIds = new Set(), pins = new S
   const effectiveStatus =
     storage === 'long' && status === 'deficient' && actual >= min * 0.5 ? 'low' : status;
 
-  // 'low' = below the RDA (amber). 'rda' = RDA met but short of the optimal
-  // zone (light green) — fine in cost mode, the gap nutrients-mode chases.
-  const fill = {
-    deficient: 'bg-red-500',
-    low:       'bg-amber-500',
-    rda:       'bg-sage-400',
-    optimal:   'bg-sage-600',
-    excessive: 'bg-orange-500',
-  }[effectiveStatus];
-
-  const labelColor = {
-    deficient: 'text-red-600',
-    low:       'text-amber-600',
-    rda:       'text-sage-600',
-    optimal:   'text-sage-700',
-    excessive: 'text-orange-600',
-  }[effectiveStatus];
+  // Machine-validated status fills (chroma floor, CVD separation, contrast
+  // relief via the always-visible % label). 'low' = below the RDA; 'rda' =
+  // RDA met but short of optimal (lighter step of the good hue); both
+  // out-of-range states (deficient, excessive) wear the serious red — bar
+  // length + the optimal zone disambiguate direction.
+  const fill = STATUS_FILL[effectiveStatus];
 
   const storageInfo = STORAGE_NOTES[storage] || STORAGE_NOTES.water;
 
@@ -81,10 +82,10 @@ function Bar({ nutrient, score, allFoods = [], planIds = new Set(), pins = new S
 
         <div className="relative h-2.5 bg-stone-100 rounded-full overflow-hidden">
           <div
-            className="absolute top-0 h-full bg-sage-200/60"
-            style={{ left: `${zoneStart}%`, width: `${Math.max(0, Math.min(100, zoneEnd) - zoneStart)}%` }}
+            className="absolute top-0 h-full"
+            style={{ left: `${zoneStart}%`, width: `${Math.max(0, Math.min(100, zoneEnd) - zoneStart)}%`, background: 'rgba(63,140,71,0.12)' }}
           />
-          <div className={`absolute top-0 h-full rounded-full ${fill}`} style={{ width: `${pct}%` }} />
+          <div className="absolute top-0 h-full rounded-full" style={{ width: `${pct}%`, background: fill }} />
           {showAbsorbed && (
             <div
               className="absolute top-0 h-full bg-stone-800/40 rounded-full"
@@ -100,7 +101,7 @@ function Bar({ nutrient, score, allFoods = [], planIds = new Set(), pins = new S
         </div>
 
         <div className="text-right">
-          <span className={`text-xs font-mono font-semibold ${labelColor}`}>{actual}%</span>
+          <span className="text-xs font-mono font-semibold text-stone-800">{actual}%</span>
           <span className={`block text-[9px] font-mono mt-0.5 px-1 rounded ${STORAGE_TAG_STYLE[storage] || ''}`} title={storageInfo.label}>
             {storageInfo.tag}
           </span>
@@ -176,21 +177,22 @@ export default function MicronutrientPanel({ nutrientScores, relaxed = [], allFo
     <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-sm">
       <div className="flex items-baseline justify-between mb-1">
         <h2 className="font-display text-lg font-bold">Micronutrient Optimization</h2>
-        <div className="text-2xs text-stone-400 font-mono">
-          <span className="text-sage-700">{optimalCount}</span> optimal
-          {rdaCount > 0 && (
-            <> · <span className="text-sage-500">{rdaCount}</span> ≥RDA</>
-          )}
-          {lowCount > 0 && (
-            <> · <span className="text-amber-600">{lowCount}</span> below RDA</>
-          )}
-          {deficientCount > 0 && (
-            <> · <span className="text-red-500">{deficientCount}</span> deficient</>
-          )}
+        <div className="text-2xs text-stone-500 font-mono flex items-center gap-2 flex-wrap">
+          {[
+            ['optimal', optimalCount, '#3F8C47'],
+            ['≥RDA', rdaCount, '#6FAE76'],
+            ['below RDA', lowCount, '#D97706'],
+            ['deficient', deficientCount, '#EF4444'],
+          ].filter(([, n]) => n > 0).map(([lbl, n, c]) => (
+            <span key={lbl} className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full inline-block" style={{ background: c }} />
+              {n} {lbl}
+            </span>
+          ))}
         </div>
       </div>
       <p className="text-xs text-stone-400 mb-3">
-        Click any nutrient to see which foods are providing it. Tags: <span className="font-mono">daily</span> = needed every day, <span className="font-mono">weekly</span> = body stores ~1–4 weeks, <span className="font-mono">months</span> = body stores months to years.
+        Click a nutrient to see which foods provide it. The shaded band is the optimal zone.
       </p>
 
       <div>

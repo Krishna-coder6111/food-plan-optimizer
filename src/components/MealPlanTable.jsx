@@ -102,12 +102,12 @@ export default function MealPlanTable({ plan, totals, targets, locks, pins = new
             <th className="py-2 px-1 w-3" />
             <SortHeader id="name"    sort={sort} setSort={setSort}>Food</SortHeader>
             <SortHeader id="qty"     sort={sort} setSort={setSort}>Qty</SortHeader>
-            <SortHeader id="protein" sort={sort} setSort={setSort}>Protein</SortHeader>
+            <SortHeader id="protein" sort={sort} setSort={setSort}>Protein (g)</SortHeader>
+            <SortHeader id="cost"    sort={sort} setSort={setSort}>Cost ($)</SortHeader>
             <SortHeader id="cal"     sort={sort} setSort={setSort}>Cal</SortHeader>
-            <SortHeader id="carbs"   sort={sort} setSort={setSort}>Carbs</SortHeader>
-            <SortHeader id="fat"     sort={sort} setSort={setSort}>Fat</SortHeader>
-            <SortHeader id="cost"    sort={sort} setSort={setSort}>Cost</SortHeader>
-            <SortHeader id="fib"     sort={sort} setSort={setSort}>Fiber</SortHeader>
+            <SortHeader id="carbs"   sort={sort} setSort={setSort}>Carbs (g)</SortHeader>
+            <SortHeader id="fat"     sort={sort} setSort={setSort}>Fat (g)</SortHeader>
+            <SortHeader id="fib"     sort={sort} setSort={setSort}>Fiber (g)</SortHeader>
             <SortHeader id="micro"   sort={sort} setSort={setSort}>Micro</SortHeader>
             <th className="py-2 px-1" />
           </tr>
@@ -143,12 +143,12 @@ export default function MealPlanTable({ plan, totals, targets, locks, pins = new
                 <td className="py-2 px-1">
                   <QtyControl food={f} lockedQty={lockedQty} onLock={onLock} onUnlock={onUnlock} />
                 </td>
-                <td className="py-2 px-1 font-mono font-bold text-sage-700">{f._protein}g</td>
-                <td className="py-2 px-1 font-mono text-stone-500">{f._cal}</td>
-                <td className="py-2 px-1 font-mono text-stone-500">{f._carbs}g</td>
-                <td className="py-2 px-1 font-mono text-stone-500">{f._fat}g</td>
-                <td className="py-2 px-1 font-mono font-semibold text-terra-600">${f._cost.toFixed(2)}</td>
-                <td className="py-2 px-1 text-stone-500">{f._fib}g</td>
+                <td className="py-2 px-1 font-mono font-bold text-stone-800 text-right tabular-nums">{f._protein}</td>
+                <td className="py-2 px-1 font-mono font-semibold text-stone-800 text-right tabular-nums">{f._cost.toFixed(2)}</td>
+                <td className="py-2 px-1 font-mono text-stone-400 text-right tabular-nums">{f._cal}</td>
+                <td className="py-2 px-1 font-mono text-stone-400 text-right tabular-nums">{f._carbs}</td>
+                <td className="py-2 px-1 font-mono text-stone-400 text-right tabular-nums">{f._fat}</td>
+                <td className="py-2 px-1 font-mono text-stone-400 text-right tabular-nums">{f._fib}</td>
                 <td className="py-2 px-1"><MicroBarWithTip food={f} servings={f.servings} /></td>
                 <td className="py-2 px-1">
                   {/* 3-button action group: pin · qty-already-shown · exclude */}
@@ -177,24 +177,24 @@ export default function MealPlanTable({ plan, totals, targets, locks, pins = new
           <tr className="border-t-2 border-stone-300">
             <td colSpan={2} className="py-2 px-1 font-display font-bold">TOTAL</td>
             <td className="py-2 px-1" />
-            <td className="py-2 px-1 font-mono font-bold text-sage-700">
-              {totals.protein}g
-              <span className="block text-2xs font-normal text-stone-400">target {targets.protein}g</span>
+            <td className="py-2 px-1 font-mono font-bold text-stone-900 text-right tabular-nums">
+              {totals.protein}
+              <span className="block text-2xs font-normal text-stone-400">/ {targets.protein}</span>
             </td>
-            <td className="py-2 px-1 font-mono font-bold">
+            <td className="py-2 px-1 font-mono font-bold text-stone-900 text-right tabular-nums">{totals.cost.toFixed(2)}</td>
+            <td className="py-2 px-1 font-mono font-bold text-stone-900 text-right tabular-nums">
               {totals.calories}
-              <span className="block text-2xs font-normal text-stone-400">target {targets.calories}</span>
+              <span className="block text-2xs font-normal text-stone-400">/ {targets.calories}</span>
             </td>
-            <td className="py-2 px-1 font-mono font-bold">
-              {totals.carbs}g
-              <span className="block text-2xs font-normal text-stone-400">target {targets.carbs}g</span>
+            <td className="py-2 px-1 font-mono text-stone-500 text-right tabular-nums">
+              {totals.carbs}
+              <span className="block text-2xs font-normal text-stone-400">/ {targets.carbs}</span>
             </td>
-            <td className="py-2 px-1 font-mono font-bold">
-              {totals.fat}g
-              <span className="block text-2xs font-normal text-stone-400">target {targets.fat}g</span>
+            <td className="py-2 px-1 font-mono text-stone-500 text-right tabular-nums">
+              {totals.fat}
+              <span className="block text-2xs font-normal text-stone-400">/ {targets.fat}</span>
             </td>
-            <td className="py-2 px-1 font-mono font-bold text-terra-600">${totals.cost}</td>
-            <td className="py-2 px-1 font-bold">{totals.fiber}g</td>
+            <td className="py-2 px-1 font-mono text-stone-500 text-right tabular-nums">{totals.fiber}</td>
             <td colSpan={2} />
           </tr>
         </tfoot>

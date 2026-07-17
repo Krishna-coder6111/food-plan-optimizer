@@ -3,7 +3,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef, Fragment } from 'react';
 import { FOODS, CATEGORIES, REGIONS } from '../data/foods';
 import LiveFoodSearch from '../components/LiveFoodSearch';
-import DayMeals from '../components/DayMeals';
+import PlanScoreboard from '../components/PlanScoreboard';
 import { CITIES, CITY_MAP } from '../data/cities';
 import { MACRO_PRESETS, ACTIVITY_LEVELS, MAX_SERVINGS, STORE_TIERS, antioxScore, antiInflammScore } from '../lib/constants';
 import { calcTDEE, calcTargets } from '../lib/tdee';
@@ -92,24 +92,6 @@ function Stat({ label, value, sub, warn, accent, hover, editable, onEdit, unit, 
         </div>
       )}
     </div>
-  );
-}
-
-// Hover-content factory for "top contributors" of a single nutrient.
-function ContribHover({ contributors = [], unit = '', label }) {
-  if (!contributors.length) return <span className="italic text-stone-400">No plan item supplies meaningful {label}.</span>;
-  return (
-    <>
-      <span className="block text-2xs uppercase tracking-wider text-stone-400 font-semibold mb-1">Top sources / day</span>
-      <span className="grid grid-cols-[1fr_auto] gap-x-2 gap-y-0.5">
-        {contributors.slice(0, 5).map(c => (
-          <span key={c.id} className="contents">
-            <span className="truncate">{c.servings}× {c.name}</span>
-            <span className="font-mono text-sage-700 text-right">{c.amount}{unit}</span>
-          </span>
-        ))}
-      </span>
-    </>
   );
 }
 
@@ -687,40 +669,7 @@ export default function Home() {
             </div>
           )}
 
-          <div className="flex gap-2 flex-wrap mb-3">
-            <Stat label="Daily Cost" value={`$${result.totals.cost}`} sub={`$${(result.totals.cost * 30).toFixed(0)}/mo in ${city.name}`} accent />
-            <Stat label="Protein" value={`${result.totals.protein}g`} sub={`target ${targets.protein}g`}
-              warn={result.totals.protein < targets.protein * 0.9}
-              hover={<ContribHover contributors={result.contributorsByNutrient?.p?.map?.(c => ({...c, amount: `${c.amount}g`})) || []} unit="" label="protein" />} />
-            <Stat label="Calories" value={result.totals.calories} sub={`target ${targets.calories}`} />
-            <Stat label="Fiber" value={`${result.totals.fiber}g`} sub={`target ${targets.fiber}g`} />
-          </div>
-
-          <div className="flex gap-2 flex-wrap mb-4">
-            <Stat label="Sat Fat" value={`${result.totals.satFat}g`} sub={`max ${targets.maxSatFat}g`}
-              warn={result.totals.satFat > targets.maxSatFat}
-              hover={<ContribHover contributors={result.contributorsByNutrient?.sf || []} unit="g" label="saturated fat" />} />
-            <Stat label="Cholesterol" value={`${result.totals.chol}mg`} sub={`max ${targets.maxChol}mg`}
-              warn={result.totals.chol > targets.maxChol}
-              hover={<ContribHover contributors={result.contributorsByNutrient?.chol || []} unit="mg" label="cholesterol" />} />
-            <Stat label="Added Sugar" value={`${result.totals.sugar}g`} sub={`max ${targets.maxSugar}g`}
-              warn={result.totals.sugar > targets.maxSugar}
-              hover={<ContribHover contributors={result.contributorsByNutrient?.sug || []} unit="g" label="added sugar" />} />
-            <Stat label="Prot/Dollar" value={`${(result.totals.protein / Math.max(0.01, result.totals.cost)).toFixed(1)}g`} sub="efficiency" />
-            <Stat
-              label="Inflam Score"
-              value={(() => {
-                const totalServ = result.plan.reduce((s, f) => s + f.servings, 0) || 1;
-                const weighted = result.plan.reduce((s, f) => s + antiInflammScore(f) * f.servings, 0) / totalServ;
-                return (weighted > 0 ? '+' : '') + weighted.toFixed(1);
-              })()}
-              sub="DII (neg = anti)"
-              warn={false}
-              accent={result.plan.reduce((s, f) => s + antiInflammScore(f) * f.servings, 0) / Math.max(1, result.plan.reduce((s, f) => s + f.servings, 0)) < -2}
-            />
-          </div>
-
-          <DayMeals plan={result.plan} days={days} />
+          <PlanScoreboard result={result} targets={targets} city={city} />
 
           <MealPlanTable
             plan={result.plan}

@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef, Fragment } from 'react';
 import { FOODS, CATEGORIES, REGIONS } from '../data/foods';
 import LiveFoodSearch from '../components/LiveFoodSearch';
+import DayMeals from '../components/DayMeals';
 import { CITIES, CITY_MAP } from '../data/cities';
 import { MACRO_PRESETS, ACTIVITY_LEVELS, MAX_SERVINGS, STORE_TIERS, antioxScore, antiInflammScore } from '../lib/constants';
 import { calcTDEE, calcTargets } from '../lib/tdee';
@@ -718,6 +719,8 @@ export default function Home() {
               accent={result.plan.reduce((s, f) => s + antiInflammScore(f) * f.servings, 0) / Math.max(1, result.plan.reduce((s, f) => s + f.servings, 0)) < -2}
             />
           </div>
+
+          <DayMeals plan={result.plan} days={days} />
 
           <MealPlanTable
             plan={result.plan}

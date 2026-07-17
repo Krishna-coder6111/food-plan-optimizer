@@ -956,8 +956,8 @@ function HormoneRow({ goal, plan, totals, contributorsByNutrient, allFoods = [],
 
   const pct       = goal.target > 0 ? totalAmount / goal.target : 0;
   const status    = pct >= 1 ? 'good' : pct >= 0.5 ? 'partial' : 'short';
-  const dotColor  = status === 'good' ? 'bg-sage-400' : status === 'partial' ? 'bg-terra-400' : 'bg-red-400';
-  const numColor  = status === 'good' ? 'text-sage-600' : status === 'partial' ? 'text-terra-600' : 'text-red-500';
+  // Validated status hues; the dot is the color channel, the text stays ink.
+  const dotColor  = status === 'good' ? '#3F8C47' : status === 'partial' ? '#D97706' : '#EF4444';
 
   const totalLabel = goal.dimByCat
     ? `${totalAmount} serv${totalAmount === 1 ? '' : 's'}`
@@ -969,13 +969,13 @@ function HormoneRow({ goal, plan, totals, contributorsByNutrient, allFoods = [],
         onClick={() => setExpanded(e => !e)}
         className="w-full flex items-center gap-3 text-left hover:bg-stone-50 -mx-2 px-2 py-1 rounded-lg transition"
       >
-        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
+        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: dotColor }} />
         <div className="flex-1 min-w-0">
           <div className="text-sm font-semibold text-stone-800">{goal.nutrient}</div>
           <div className="text-xs text-stone-400 leading-snug">{goal.why}</div>
         </div>
         <div className="text-right flex-shrink-0">
-          <div className={`text-xs font-bold font-mono ${numColor}`}>
+          <div className="text-xs font-bold font-mono text-stone-800">
             {sources.length} source{sources.length !== 1 ? 's' : ''} · {totalLabel}
           </div>
           {!expanded && sources.length > 0 && (
@@ -1058,7 +1058,7 @@ function ShoppingListView({ plan, city, storeTier, days, setDays }) {
                 className="w-12 px-1.5 py-0.5 rounded border border-stone-200 text-center font-mono"
               />
             </label>
-            <span className="text-terra-600 font-bold">${list.totalWeekly}</span>
+            <span className="text-stone-900 font-bold">${list.totalWeekly}</span>
             <span className="text-stone-400">total ({days}d) · ${perDayCost}/day</span>
           </div>
         </div>
@@ -1086,7 +1086,7 @@ function ShoppingListView({ plan, city, storeTier, days, setDays }) {
                   <td className="py-1 text-stone-700 font-medium">{it.name}</td>
                   <td className="py-1 text-stone-400 text-2xs">{it.unit}</td>
                   <td className="py-1 font-mono text-stone-500 text-right">{it.weeklyServings}× <span className="text-stone-300">/ {days}d</span></td>
-                  <td className="py-1 font-mono font-semibold text-terra-600 text-right w-16">${it.weeklyCost.toFixed(2)}</td>
+                  <td className="py-1 font-mono font-semibold text-stone-800 text-right w-16 tabular-nums">${it.weeklyCost.toFixed(2)}</td>
                 </tr>
               ))}
             </tbody>
